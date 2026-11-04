@@ -2,7 +2,7 @@
 
 Turns a terrestrial laser scan of an existing office floor (`.e57`) into an IFC4 BIM model, using open and license-free tools.
 
-The model contains seven element types:
+The model contains seven element types and the rooms:
 
 | Element | IFC class |
 |---|---|
@@ -13,6 +13,9 @@ The model contains seven element types:
 | Window, including glass walls | `IfcWindow`, `IfcCurtainWall` |
 | Column | `IfcColumn` |
 | Partition (cubicle panel) | `IfcWall` (PARTITIONING) |
+| Room | `IfcSpace` |
+
+Glass panels and window bands are exported as `IfcCurtainWall`. Doors are cut into their wall or glass panel.
 
 ## Workflow
 

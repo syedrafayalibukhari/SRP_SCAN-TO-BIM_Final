@@ -1,8 +1,9 @@
 """Door leaves from door points and windows in walls.
 
-Doors: door points are grouped in plan (DBSCAN). In each group, straight lines are fitted one after the
-other (RANSAC); lines that are parallel and close together are the two faces of one leaf. The position
-of a leaf is the position scanned, so an open door stays open in the model.
+Doors: door points are grouped in plan (DBSCAN); one group is one door. In each group, straight lines are
+fitted one after the other (RANSAC); lines that are parallel and close together are two faces of one
+line. A group holds one line (a closed door, or an open leaf) or two (the doorway and the open leaf).
+The components stage puts each door into its doorway.
 
 Windows use a per-wall image (Previtali 2018), 5 cm pixels in (t along the wall, z). Each pixel is
     wall      wall points within the slab (+-3 cm of its faces)
@@ -84,14 +85,14 @@ def detect_door_leaves(points: np.ndarray, labels: np.ndarray, floor_z: float) -
         members = usable[groups == group]
         if len(members) < 200:
             continue
-        for leaf in merge_faces(fit_lines(members[:, :2], rng)):
-            if not LEAF_MIN_WIDTH <= leaf["width"] <= LEAF_MAX_WIDTH or leaf["count"] < 0.1 * len(members):
-                continue
-            near = door_points[np.abs((door_points[:, :2] - leaf["point"]) @ leaf["n"]) < 2 * LEAF_BAND + LEAF_FACE_DISTANCE]
-            near = near[np.abs((near[:, :2] - leaf["point"]) @ leaf["d"]) < leaf["width"] / 2 + 0.05]
-            bottom, upper = np.percentile(near[:, 2] - floor_z, [1, 99])
-            bottom = 0.0 if bottom <= SAME_FLOOR_BAND else float(bottom)
-            leaves.append(dict(group=int(group), c=leaf["point"].tolist(), d=leaf["d"].tolist(), width=leaf["width"], z0=bottom, height=float(upper) - bottom))
+        lines = [leaf for leaf in merge_faces(fit_lines(members[:, :2], rng))
+                 if LEAF_MIN_WIDTH <= leaf["width"] <= LEAF_MAX_WIDTH and leaf["count"] >= 0.1 * len(members)]
+        if not lines:
+            continue
+        low, high = np.percentile(door_points[np.linalg.norm(door_points[:, :2] - members[:, :2].mean(0), axis=1) < 1.5, 2] - floor_z, [1, 99])
+        bottom = 0.0 if low <= SAME_FLOOR_BAND else float(low)
+        leaves.append(dict(lines=[dict(c=line["point"].tolist(), d=line["d"].tolist(), width=line["width"]) for line in lines[:2]],
+                           z0=bottom, height=float(high) - bottom))
     return leaves
 
 
@@ -209,9 +210,9 @@ def run(ctx: ModelContext) -> None:
         if slab["kind"] == "wall":
             detect_on_slab(index, slab, points, labels, stations, floor_z, top, voxel_origin, grid, found, images)
     doors = detect_door_leaves(points, labels, floor_z)
-    ctx.log(f"doors: {len(doors)} leaves at {len({leaf['group'] for leaf in doors})} locations; windows in walls: {len(found)}")
-    for leaf in doors:
-        ctx.log(f"  door at ({leaf['c'][0]:.2f}, {leaf['c'][1]:.2f}): {leaf['width']:.2f} x {leaf['height']:.2f} m")
+    ctx.log(f"doors: {len(doors)}; windows in walls: {len(found)}")
+    for door in doors:
+        ctx.log(f"  door with {len(door['lines'])} line(s) at ({door['lines'][0]['c'][0]:.2f}, {door['lines'][0]['c'][1]:.2f}), height {door['height']:.2f} m")
     for item in found:
         ctx.log(f"  wall {item['slab']:2d} window {item['width']:.2f} x {item['height']:.2f} m, sill {item['z0']:.2f} m, fill {item['fill']:.2f}")
     ctx.save("openings", dict(doors=doors, windows=found))

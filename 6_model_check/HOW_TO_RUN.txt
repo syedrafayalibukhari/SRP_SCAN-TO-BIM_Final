@@ -22,3 +22,6 @@ Options
   --components FILE.json    component description (default: next to the model)
 
 The script ends with an error code if check 1, 2 or 3 fails.
+
+Doors are modelled closed. Points of a leaf that stood open during the scan lie away from the
+modelled door, so the door distances in check 5 are large for those doors. Check 6 is the door test.

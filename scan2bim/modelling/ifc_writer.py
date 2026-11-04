@@ -5,10 +5,11 @@
     Door, window type   IfcDoorType, IfcWindowType with parametric geometry (lining and leaf, frame and glass)
     Door, window        IfcOpeningElement in the host wall plus IfcDoor or IfcWindow; the type geometry is stretched
                         when the occurrence has its own size; windows in walls with space on one side sit at that face;
-                        a door leaf that is not in a wall is placed where it was scanned
+                        a door in a gap between elements is placed in the gap
     Floor               IfcSlab FLOOR, extruded downwards by the type thickness
     Ceiling             IfcCovering CEILING at the ceiling height
     Column              IfcColumn with mapped type geometry
+    Space               IfcSpace (boundary x height), aggregated into the storey
 """
 from __future__ import annotations
 
@@ -259,6 +260,18 @@ class IfcBuilder:
             self.assign(entity, item["typeID"])
             self.contained.append(entity)
 
+    def create_spaces(self) -> None:
+        f = self.file
+        spaces = []
+        for item in self.description["Spaces"]:
+            shape = self.body([self.area_solid(item["boundary"], item["holes"], item["height"])])
+            placement = self.placement(self.storey_placement, (0, 0, 0))
+            entity = f.createIfcSpace(self.guid(), None, item["name"], None, None, placement, shape, None, "ELEMENT", "INTERNAL", 0.0)
+            self.properties(entity, "Scan_Provenance", {"Source": "scanner visibility and graph cut", "Area_m2": item["area"], "Height_m": item["height"]})
+            spaces.append(entity)
+        if spaces:
+            f.createIfcRelAggregates(self.guid(), None, None, None, self.storey, spaces)
+
     def build(self):
         self.create_types()
         self.create_walls()
@@ -267,6 +280,7 @@ class IfcBuilder:
         for item in self.description["Windows"]:
             self.create_opening(item, "IfcWindow")
         self.create_surfaces_and_columns()
+        self.create_spaces()
         for type_id, occurrences in self.by_type.items():
             self.file.createIfcRelDefinesByType(self.guid(), None, None, None, occurrences, self.types[type_id]["entity"])
         self.file.createIfcRelContainedInSpatialStructure(self.guid(), None, None, None, self.contained, self.storey)
@@ -279,5 +293,5 @@ def run(ctx: ModelContext) -> None:
     model = IfcBuilder(description).build()
     path = ctx.output / "model.ifc"
     model.write(str(path))
-    classes = ["IfcSlab", "IfcCovering", "IfcWall", "IfcCurtainWall", "IfcDoor", "IfcWindow", "IfcColumn", "IfcOpeningElement"]
+    classes = ["IfcSlab", "IfcCovering", "IfcWall", "IfcCurtainWall", "IfcDoor", "IfcWindow", "IfcColumn", "IfcSpace", "IfcOpeningElement"]
     ctx.log(f"written {path}: " + ", ".join(f"{name} {len(model.by_type(name))}" for name in classes))

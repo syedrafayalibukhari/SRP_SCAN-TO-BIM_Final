@@ -96,8 +96,22 @@ def test_element_types_present(result):
 
 def test_only_the_requested_elements(result):
     _, model, _ = result
-    for ifc_class in ("IfcSpace", "IfcFurniture", "IfcFurnishingElement"):
+    for ifc_class in ("IfcFurniture", "IfcFurnishingElement"):
         assert not model.by_type(ifc_class), ifc_class
+
+
+def test_spaces_exported(result):
+    _, model, _ = result
+    spaces = model.by_type("IfcSpace")
+    assert len(spaces) == 2
+    assert all(space.Decomposes for space in spaces)
+
+
+def test_closed_door_is_cut_into_its_wall(result):
+    _, model, _ = result
+    door = model.by_type("IfcDoor")[0]
+    assert door.FillsVoids
+    assert door.FillsVoids[0].RelatingOpeningElement.VoidsElements[0].RelatingBuildingElement.is_a("IfcWall")
 
 
 def test_column_size(result):
@@ -118,7 +132,7 @@ def test_door_position(result):
     ctx, _, _ = result
     doors = ctx.load("openings")["doors"]
     assert len(doors) == 1
-    assert doors[0]["width"] == pytest.approx(0.9, abs=0.1)
+    assert doors[0]["lines"][0]["width"] == pytest.approx(0.9, abs=0.1)
     assert doors[0]["height"] == pytest.approx(2.1, abs=0.15)
 
 

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scan2bim.classes import CLASSES, COLOURS, OTHER, PARTITION, UNKNOWN, invalid_labels, legacy_lookup
-from scan2bim.modelling import junctions
+from scan2bim.modelling import components, junctions
 from scan2bim.plyio import PlyStreamWriter, read_ply, write_ply
 
 REPO = Path(__file__).resolve().parents[1]
@@ -141,6 +141,23 @@ def test_merge_rejects_old_labels(tmp_path):
     result = subprocess.run([sys.executable, str(REPO / "4_merge_tiles" / "merge_tiles.py"), "--input-folder", str(folder), "--output-folder", str(tmp_path / "m")],
                             capture_output=True, text=True)
     assert result.returncode != 0 and "not part of the classes" in result.stderr
+
+
+def test_open_door_goes_into_its_doorway():
+    wall = dict(element("wall", (1, 0), 0.0, 1.0, 5.0), function="interior")
+    leaf = dict(c=[0.0, 0.5], d=[0.0, 1.0], width=0.9)                 # hinge at (0, 0.05), standing open
+    door = components.doorway(dict(lines=[leaf], z0=0.0, height=2.1), [wall])
+    assert door["d"] == pytest.approx([1.0, 0.0])
+    assert door["c"][1] == pytest.approx(0.05)
+
+
+def test_two_lines_are_one_door_with_the_width_of_the_leaf():
+    wall = dict(element("wall", (1, 0), 0.0, 1.5, 5.0), function="interior")
+    in_plane = dict(c=[0.7, 0.0], d=[1.0, 0.0], width=1.4)
+    leaf = dict(c=[0.0, -0.45], d=[0.0, 1.0], width=0.9)
+    door = components.doorway(dict(lines=[in_plane, leaf], z0=0.0, height=2.1), [wall])
+    assert door["width"] == pytest.approx(0.9)
+    assert door["c"] == pytest.approx([0.45, 0.0])
 
 
 def element(kind, d, o, t0, t1, thickness=0.2):

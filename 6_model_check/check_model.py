@@ -90,6 +90,8 @@ def relationship_errors(model) -> List[str]:
     contained = {e.id() for rel in model.by_type("IfcRelContainedInSpatialStructure") for e in rel.RelatedElements}
     for ifc_class in ("IfcSlab", "IfcCovering", "IfcWall", "IfcCurtainWall", "IfcDoor", "IfcWindow", "IfcColumn"):
         errors += [f"{e.Name} is not in a storey" for e in model.by_type(ifc_class) if e.id() not in contained]
+    aggregated = {e.id() for rel in model.by_type("IfcRelAggregates") for e in rel.RelatedObjects}
+    errors += [f"{e.Name} is not in a storey" for e in model.by_type("IfcSpace") if e.id() not in aggregated]
     errors += [f"{e.Name} is cut into no wall" for e in model.by_type("IfcOpeningElement") if not e.VoidsElements]
     errors += [f"{e.Name} is not filled" for e in model.by_type("IfcOpeningElement") if not e.HasFillings]
     return errors
@@ -191,7 +193,7 @@ def main() -> None:
     log(f"2. Geometry: {sum(len(v) for v in meshes.values())} elements built, {len(failed)} failed")
     for name in ("floor", "ceiling", "wall", "door", "window", "column", "partition"):
         log(f"   {name:10s}{len(meshes.get(name, [])):5d}")
-    log(f"   of the windows, {len(model.by_type('IfcCurtainWall'))} are glass walls")
+    log(f"   of the windows, {len(model.by_type('IfcCurtainWall'))} are curtain walls; spaces: {len(model.by_type('IfcSpace'))}")
     for item in failed[:20]:
         log(f"   {item}")
 

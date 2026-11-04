@@ -5,8 +5,9 @@ grouping measured instances. The description is written as components.json and c
 model is built from it alone, without reading the point cloud.
 
     Wall types / walls        function (exterior, interior, glass_wall, partition), thickness, centre line, height
-    Door and window types     width, height, sill; occurrences are hosted by a wall at an offset along it;
-                              a door leaf that stands open has its own location and rotation
+    Door and window types     width, height, sill; occurrences are hosted by a wall or glass wall at an offset
+                              along it; a door in a gap between elements has its own location and rotation
+    Spaces                    room name, boundary polygon, height
     Floor and ceiling types   thickness, material; occurrences have a boundary polygon
     Column types / columns    width, depth; occurrences have a location and a rotation
 """
@@ -27,6 +28,7 @@ from .context import ModelContext
 FLOOR_THICKNESS, CEILING_THICKNESS = 0.2, 0.02
 WALL_MATERIALS = {"exterior": "Exterior wall (material not observable)", "interior": "Interior wall", "glass_wall": "Glass", "partition": "Workstation panel"}
 HOST_ANGLE, HOST_DISTANCE = 10.0, 0.12
+MIN_SWING_ANGLE, HINGE_DISTANCE = 45.0, 0.25
 NAMES = {"exterior": "Wall", "interior": "Wall", "glass_wall": "Glass wall", "partition": "Partition"}
 
 
@@ -92,8 +94,59 @@ def describe_walls(elements: List[dict], room_polygons: list) -> Tuple[List[dict
     return walls, types, occurrences
 
 
+def in_line_with(line: dict, walls: List[dict]) -> bool:
+    """True if the line continues a wall or glass wall."""
+    centre, d = np.array(line["c"]), np.array(line["d"])
+    return any(x["function"] != "partition" and abs(x["d"] @ d) > np.cos(np.radians(HOST_ANGLE))
+               and abs(centre @ x["n"] - x["o"]) <= x["T"] / 2 + HOST_DISTANCE for x in walls)
+
+
+def line_ends(line: dict) -> Tuple[np.ndarray, np.ndarray]:
+    centre, d = np.array(line["c"]), np.array(line["d"])
+    return centre - d * line["width"] / 2, centre + d * line["width"] / 2
+
+
+def doorway_of_two_lines(doorway: dict, leaf: dict) -> dict:
+    """The door starts at the hinge, where the lines meet, and has the width of the open leaf."""
+    pairs = [(np.linalg.norm(a - b), a, c) for a, c in (line_ends(doorway), line_ends(doorway)[::-1]) for b in line_ends(leaf)]
+    _, hinge, far = min(pairs, key=lambda item: item[0])
+    direction = (far - hinge) / np.linalg.norm(far - hinge)
+    return dict(c=(hinge + direction * leaf["width"] / 2).tolist(), d=direction.tolist(), width=leaf["width"])
+
+
+def doorway_of_open_leaf(leaf: dict, walls: List[dict]) -> dict:
+    """Turn an open leaf about its hinge into the line of the wall it opens from."""
+    best = None
+    for end in line_ends(leaf):
+        for x in walls:
+            if x["function"] == "partition" or abs(x["d"] @ np.array(leaf["d"])) > np.cos(np.radians(MIN_SWING_ANGLE)):
+                continue
+            off_line = abs(end @ x["n"] - x["o"])
+            along = end @ x["d"]
+            to_wall = max(x["t0"] - along, along - x["t1"], 0.0)
+            if off_line <= HINGE_DISTANCE and to_wall <= 1.5 * leaf["width"] and (best is None or off_line + to_wall < best[0]):
+                sign = 1.0 if along < x["t0"] else -1.0
+                best = (off_line + to_wall, end, x["d"] * sign)
+    if best is None:
+        return leaf
+    _, hinge, direction = best
+    return dict(c=(hinge + direction * leaf["width"] / 2).tolist(), d=direction.tolist(), width=leaf["width"])
+
+
+def doorway(door: dict, walls: List[dict]) -> dict:
+    """Closed position of a door from its one or two lines."""
+    lines = door["lines"]
+    in_plane = [line for line in lines if in_line_with(line, walls)]
+    if len(lines) == 2 and len(in_plane) >= 1:
+        other = next(line for line in lines if line is not in_plane[0])
+        return doorway_of_two_lines(in_plane[0], other)
+    if in_plane:
+        return in_plane[0]
+    return doorway_of_open_leaf(lines[0], walls)
+
+
 def door_host(leaf: dict, walls: List[dict]) -> Optional[dict]:
-    """The wall or glass wall the leaf is closed in, if any: parallel, in the wall plane, mostly along it."""
+    """The wall or glass wall the door is cut into, if any: parallel, in the wall plane, mostly along it."""
     centre, d = np.array(leaf["c"]), np.array(leaf["d"])
     half = leaf["width"] / 2
     for x in walls:
@@ -115,9 +168,10 @@ def describe_openings(openings: dict, slabs: List[dict], walls: List[dict]) -> T
         hosts = [x for x in walls if x["function"] != "partition" and abs(x["d"] @ d) > 0.99]
         host = min(hosts, key=lambda x: abs(centre @ x["n"] - x["o"]) + max(0, x["t0"] - centre @ x["d"], centre @ x["d"] - x["t1"]))
         items.append(dict(kind="window", wall=host, offset=float(centre @ host["d"] - host["t0"]), W=opening["width"], H=opening["height"], sill=opening["z0"]))
-    for leaf in openings["doors"]:
+    for door in openings["doors"]:
+        leaf = doorway(door, walls)
         host = door_host(leaf, walls)
-        item = dict(kind="door", wall=host, W=leaf["width"], H=leaf["height"], sill=leaf["z0"])
+        item = dict(kind="door", wall=host, W=leaf["width"], H=door["height"], sill=door["z0"])
         if host is not None:
             item["offset"] = float(np.array(leaf["c"]) @ host["d"] - host["t0"])
         else:
@@ -146,7 +200,7 @@ def describe_openings(openings: dict, slabs: List[dict], walls: List[dict]) -> T
         if item["wall"] is not None:
             record.update(wallID=item["wall"]["id"], offset=r3(item["offset"]), source=f"{item['kind']} points, in the wall")
         else:
-            record.update(location=item["location"], rotation=item["rotation"], source="door points, leaf as scanned, not in a wall")
+            record.update(location=item["location"], rotation=item["rotation"], source="door points, in the gap between walls")
         record["id"] = f"{'D' if item['kind'] == 'door' else 'N'}{len(group_list) + 1:03d}"
         record["name"] = f"{item['kind'].title()} {len(group_list) + 1:03d}"
         group_list.append(record)
@@ -172,10 +226,12 @@ def describe_columns(elements: List[dict]) -> Tuple[List[dict], List[dict]]:
     return types, occurrences
 
 
-def describe_surfaces(rooms: List[dict], walls: List[dict], floor_z: float) -> Tuple[List[dict], List[dict]]:
-    ceilings = []
+def describe_surfaces(rooms: List[dict], walls: List[dict], floor_z: float) -> Tuple[List[dict], List[dict], List[dict]]:
+    ceilings, spaces = [], []
     for i, room in enumerate(rooms):
         polygon = shape(room["poly"])
+        spaces.append(dict(id=f"S{i + 1:02d}", name=room["name"], height=r3(room["z_ceil"] - floor_z), area=round(room["area"], 2),
+                           boundary=ring(polygon.exterior), holes=[ring(hole) for hole in polygon.interiors]))
         ceilings.append(dict(id=f"C{i + 1:02d}", name=f"Ceiling {i + 1:02d}", typeID="CT01", height=r3(room["z_ceil"] - floor_z), boundary=ring(polygon.exterior),
                              holes=[ring(hole) for hole in polygon.interiors], source="room footprint, median ceiling height"))
     outline = unary_union([shape(r["poly"]) for r in rooms] + [rectangle(x) for x in walls if x["function"] != "partition"])
@@ -183,7 +239,7 @@ def describe_surfaces(rooms: List[dict], walls: List[dict], floor_z: float) -> T
     floors = [dict(id=f"F{k + 1:02d}", name=f"Floor {k + 1:02d}", typeID="SL01", boundary=ring(part.exterior), holes=[ring(hole) for hole in part.interiors],
                    source="room footprints and walls")
               for k, part in enumerate(outline.geoms if hasattr(outline, "geoms") else [outline])]
-    return floors, ceilings
+    return floors, ceilings, spaces
 
 
 def write_gml(ctx: ModelContext, description: dict) -> None:
@@ -199,7 +255,7 @@ def write_gml(ctx: ModelContext, description: dict) -> None:
     for wall in description["Walls"]:
         node = ET.SubElement(parent, "Wall", {k: str(v) for k, v in wall.items() if k not in ("start", "end")})
         ET.SubElement(node, "CentreLine").text = positions([wall["start"], wall["end"]])
-    for section in ("Floors", "Ceilings"):
+    for section in ("Floors", "Ceilings", "Spaces"):
         parent = ET.SubElement(storey, section)
         for item in description[section]:
             node = ET.SubElement(parent, section[:-1], {k: str(v) for k, v in item.items() if k not in ("boundary", "holes")})
@@ -279,18 +335,18 @@ def run(ctx: ModelContext) -> None:
     walls, wall_types, wall_items = describe_walls(elements, polygons)
     opening_types, doors, windows = describe_openings(ctx.load("openings"), rooms["slabs"], walls)
     column_types, columns = describe_columns(elements)
-    floors, ceilings = describe_surfaces(rooms["rooms"], walls, floor_z)
+    floors, ceilings, spaces = describe_surfaces(rooms["rooms"], walls, floor_z)
     description = dict(Building=dict(id="B01", name=ctx.project_name),
                        Storey=dict(id="L00", name="Level 0", elevation=r3(floor_z), height=r3(height)),
                        WallTypes=wall_types, Walls=wall_items, DoorTypes=opening_types["door"], Doors=doors,
                        WindowTypes=opening_types["window"], Windows=windows,
                        FloorTypes=[dict(id="SL01", thickness=FLOOR_THICKNESS, material="Floor slab (assumed)")], Floors=floors,
                        CeilingTypes=[dict(id="CT01", thickness=CEILING_THICKNESS, material="Suspended ceiling (assumed)")], Ceilings=ceilings,
-                       ColumnTypes=column_types, Columns=columns)
+                       ColumnTypes=column_types, Columns=columns, Spaces=spaces)
     with open(ctx.output / "components.json", "w", encoding="utf-8") as handle:
         json.dump(description, handle, indent=1)
     write_gml(ctx, description)
     write_element_list(ctx, description)
     plot(ctx, description)
     ctx.log(f"components: {len(wall_items)} walls of {len(wall_types)} types, {len(doors)} doors, {len(windows)} windows, "
-            f"{len(columns)} columns, {len(floors)} floors, {len(ceilings)} ceilings")
+            f"{len(columns)} columns, {len(floors)} floors, {len(ceilings)} ceilings, {len(spaces)} spaces")
