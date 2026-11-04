@@ -16,8 +16,8 @@ What it does
 4. Correct
      press L (or click Lasso), draw a loop around wrong points (only visible points are selected),
      then click the correct label or press its key:
-       0 floor, 1 ceiling, 2 wall, 3 door, 4 window (glass walls too), 5 column, 6 partition,
-       7 other, U unknown
+       0 floor, 1 ceiling, 2 wall, 3 door, 4 window, 5 column, 6 partition, 7 other,
+       8 curtain wall, U unknown
      Ctrl+Z = undo
 5. Click "Save corrected PLY". The file is saved to the Downloads folder with "_corrected" added
    to its name.
@@ -25,5 +25,6 @@ What it does
 
 Notes
   - Label furniture, equipment and clutter as other.
+  - Window points become IfcWindow and curtain wall points become IfcCurtainWall.
   - Use the Confidence colouring to find uncertain points first.
   - Label points that cannot be identified as unknown rather than guessing.

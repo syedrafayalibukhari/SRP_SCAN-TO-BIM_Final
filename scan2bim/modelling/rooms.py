@@ -24,8 +24,9 @@ from shapely.ops import polygonize, unary_union
 from shapely.strtree import STRtree
 from skimage.filters import threshold_otsu
 
-from ..classes import CEILING, COLUMN, DOOR, WALL, WINDOW
+from ..classes import CEILING, COLUMN, CURTAIN_WALL, DOOR, WALL, WINDOW
 from .context import ModelContext
+from .structure import GLAZED
 
 PIXEL, LAMBDA = 0.05, 0.6
 SINGLE_FACE_WALL_THICKNESS, SINGLE_FACE_GLASS_THICKNESS = 0.25, 0.06
@@ -44,7 +45,7 @@ class PlanRaster:
 
 def blocker_map(raster: PlanRaster, points: np.ndarray, labels: np.ndarray, faces: List[dict], floor_z: float) -> np.ndarray:
     blocked = np.zeros((raster.nx, raster.ny), bool)
-    mask = np.isin(labels, [WALL, COLUMN, DOOR, WINDOW]) & (points[:, 2] > floor_z + 0.3) & (points[:, 2] < floor_z + 2.4)
+    mask = np.isin(labels, [WALL, COLUMN, DOOR, WINDOW, CURTAIN_WALL]) & (points[:, 2] > floor_z + 0.3) & (points[:, 2] < floor_z + 2.4)
     cells = raster.cells(points[mask, :2])
     blocked[cells[:, 0], cells[:, 1]] = True
     for face in faces:
@@ -286,7 +287,7 @@ def run(ctx: ModelContext) -> None:
         n, d = np.array(slab["n"]), np.array(slab["d"])
         behind = Point(n * (slab["o1"] - 0.3) + d * (slab["t0"] + slab["t1"]) / 2)
         slab["side"] = "exterior" if not inside_rooms.contains(behind) else "interior"
-        slab["o0"] = slab["o1"] - (SINGLE_FACE_GLASS_THICKNESS if slab["kind"] == "glass_wall" else SINGLE_FACE_WALL_THICKNESS)
+        slab["o0"] = slab["o1"] - (SINGLE_FACE_GLASS_THICKNESS if slab["kind"] in GLAZED else SINGLE_FACE_WALL_THICKNESS)
     ctx.log(f"single-face slabs: {sum(not s['paired'] and s['side'] == 'exterior' for s in slabs)} bounded by outside or unseen space "
             f"(thickness assumed), {sum(not s['paired'] and s['side'] == 'interior' for s in slabs)} interior")
     ctx.save("rooms", dict(rooms=rooms, slabs=slabs))

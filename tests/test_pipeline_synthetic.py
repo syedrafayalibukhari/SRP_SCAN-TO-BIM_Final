@@ -12,7 +12,7 @@ import ifcopenshell
 import numpy as np
 import pytest
 
-from scan2bim.classes import CEILING, COLUMN, DOOR, FLOOR, OTHER, PARTITION, WALL, WINDOW
+from scan2bim.classes import CEILING, COLUMN, CURTAIN_WALL, DOOR, FLOOR, OTHER, PARTITION, WALL, WINDOW
 from scan2bim.modelling import columns_partitions, components, ifc_writer, openings, prepare, rooms, structure
 from scan2bim.modelling.context import ModelContext
 from scan2bim.plyio import write_ply
@@ -48,8 +48,9 @@ def generated_floor() -> np.ndarray:
     top = Z0 + HEIGHT
     outside_door = lambda y, z: ~((y > 3.0) & (y < 4.0) & (z < Z0 + 2.1))
     parts = [plane_z(Z0, 0, 10, 0, 8, FLOOR), plane_z(top, 0, 10, 0, 8, CEILING),
-             plane_x(0, 0, 8, Z0, top, WALL), plane_x(10, 0, 8, Z0, top, WALL), plane_y(0, 0, 10, Z0, top, WALL),
-             plane_y(8, 0, 5, Z0, top, WALL), plane_y(8, 5, 10, Z0, top, WINDOW),
+             plane_x(0, 0, 8, Z0, top, WALL), plane_x(10, 0, 8, Z0, top, WALL), plane_y(0, 5.5, 10, Z0, top, WALL), plane_y(0, 0, 2.5, Z0, top, WALL),
+             plane_y(0, 2.5, 5.5, Z0 + 1.0, Z0 + 2.4, WINDOW),
+             plane_y(8, 0, 5, Z0, top, WALL), plane_y(8, 5, 10, Z0, top, CURTAIN_WALL),
              plane_x(5.0, 0, 8, Z0, top, WALL, outside_door), plane_x(5.15, 0, 8, Z0, top, WALL, outside_door)]
     for x in (5.03, 5.08):                                             # closed door leaf
         parts.append(plane_x(x, 3.05, 3.95, Z0, Z0 + 2.1, DOOR))
@@ -98,6 +99,14 @@ def test_only_the_requested_elements(result):
     _, model, _ = result
     for ifc_class in ("IfcFurniture", "IfcFurnishingElement"):
         assert not model.by_type(ifc_class), ifc_class
+
+
+def test_labels_decide_curtain_wall_or_window(result):
+    _, model, _ = result
+    assert len(model.by_type("IfcCurtainWall")) == 1
+    window = model.by_type("IfcWindow")[0]
+    assert window.OverallHeight == pytest.approx(1.4, abs=0.1)
+    assert window.ObjectPlacement.RelativePlacement.Location.Coordinates[2] == pytest.approx(1.0, abs=0.1)
 
 
 def test_spaces_exported(result):

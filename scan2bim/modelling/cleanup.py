@@ -1,11 +1,11 @@
 """Element clean-up: L and T junctions, overlap resolution and measured heights.
 
-Overlaps are resolved by priority: column > wall > glass wall > partition. A parallel overlap thins the
+Overlaps are resolved by priority: column > wall > curtain wall and window > partition. A parallel overlap thins the
 lower-priority element, any other overlap cuts it. Pieces that become too short are dropped.
 
-Walls and columns end at the 99th percentile height of their own points. Window points give the height
-of a glazed run: a run that starts more than 0.3 m above the floor is a window band with a measured sill
-and head. Nothing is modelled below such a sill, because the scan does not show what is there.
+Walls and columns end at the 99th percentile height of their own points. Glazed runs (curtain walls and
+windows) take their height from their own points too: a run that starts more than 0.3 m above the floor
+has a measured sill and head. Nothing is modelled below such a sill, because the scan does not show it.
 """
 from __future__ import annotations
 
@@ -16,11 +16,12 @@ import numpy as np
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from ..classes import COLUMN, WALL, WINDOW
+from ..classes import COLUMN, CURTAIN_WALL, WALL, WINDOW
 from . import junctions
 from .context import ModelContext
+from .structure import GLAZED
 
-PRIORITY = {"column": 0, "wall": 1, "glass_wall": 2, "partition": 4}
+PRIORITY = {"column": 0, "wall": 1, "glass_wall": 2, "window_run": 2, "partition": 4}
 GAP, MIN_LENGTH, PARALLEL_ANGLE = 0.001, 0.10, 10.0
 MIN_PARTITION_LENGTH = 0.30
 GLASS_EXTENSION = 1.0                  # m, largest gap between a glass end and the wall or data edge behind it
@@ -41,9 +42,9 @@ def collect_elements(ctx: ModelContext) -> Tuple[List[dict], float, float]:
     height = max(r["z_ceil"] for r in rooms["rooms"]) - floor_z
     elements = []
     for i, slab in enumerate(rooms["slabs"]):
-        glass = slab["kind"] == "glass_wall"
+        glass = slab["kind"] in GLAZED
         if slab["paired"]:
-            source = "glass wall from window points, 6 cm" if glass else "two faces, measured thickness"
+            source = "glazing from labelled points, 6 cm" if glass else "two faces, measured thickness"
         else:
             source = "one face, other side unseen, assumed thickness"
         elements.append(dict(kind=slab["kind"], src=("slab", i), d=np.array(slab["d"]), n=np.array(slab["n"]), o=(slab["o0"] + slab["o1"]) / 2,
@@ -68,7 +69,7 @@ def extend_glass_walls(ctx: ModelContext, elements: List[dict], floor_z: float) 
     points = points[(points[:, 2] > floor_z + 0.3) & (points[:, 2] < floor_z + 2.0), :2]
     crop = ctx.crop
     walls = [x for x in elements if x["kind"] == "wall"]
-    for glass in (x for x in elements if x["kind"] == "glass_wall"):
+    for glass in (x for x in elements if x["kind"] in GLAZED):
         for end, sign in (("t0", -1), ("t1", 1)):
             tip = glass[end]
             stops = []
@@ -167,26 +168,27 @@ def resolve_overlaps(elements: List[dict], log, tag: str) -> List[dict]:
 
 def measure_heights(ctx: ModelContext, elements: List[dict], floor_z: float) -> None:
     points, labels = ctx.points, ctx.labels
-    own = {"wall": points[labels == WALL], "column": points[labels == COLUMN], "glass_wall": points[labels == WINDOW]}
+    own = {"wall": points[labels == WALL], "column": points[labels == COLUMN], "glass_wall": points[labels == CURTAIN_WALL],
+           "window_run": points[labels == WINDOW]}
     bands = 0
     for x in elements:
         x["base"] = 0.0
         if x["kind"] == "partition":
             continue
         cloud = own[x["kind"]]
-        reach = 0.3 if x["kind"] == "glass_wall" else 0.06
+        reach = 0.3 if x["kind"] in GLAZED else 0.06
         along, across = cloud[:, :2] @ x["d"], cloud[:, :2] @ x["n"]
         z = cloud[(along > x["t0"]) & (along < x["t1"]) & (np.abs(across - x["o"]) < x["T"] / 2 + reach), 2] - floor_z
         if len(z) < HEIGHT_POINTS_MIN:
             continue
         bottom, top = np.percentile(z, [1, 99])
-        if x["kind"] != "glass_wall":
+        if x["kind"] not in GLAZED:
             x["H"] = min(x["H"], float(top))
         elif bottom > GLASS_FLOOR_BAND:
             x["base"], x["H"] = float(bottom), float(top - bottom)
-            x["source"] = "window band, sill and head from window points"
+            x["source"] = "sill and head from labelled points"
             bands += 1
-    ctx.log(f"heights measured from own points; window bands: {bands}")
+    ctx.log(f"heights measured from own points; glazed runs with a sill: {bands}")
 
 
 def clean_elements(ctx: ModelContext) -> Tuple[List[dict], float, float]:

@@ -32,6 +32,7 @@ def test_corrector_tool_uses_the_same_classes():
     assert tuple(classes[:-1]) == CLASSES
     assert tuple(colours[:-1]) == COLOURS
     assert values == list(range(len(CLASSES))) + [UNKNOWN]
+    assert len(json.loads(re.search(r"const KEYS = (\[.*?\]);", html).group(1))) == len(values)
 
 
 def test_legacy_labels():

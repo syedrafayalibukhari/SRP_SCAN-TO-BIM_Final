@@ -87,7 +87,8 @@ def load_model():
     with gzip.open(MODEL_PATH, "rt", encoding="utf-8") as handle:
         booster = lgb.Booster(model_str=handle.read())
     info = json.loads(MODEL_INFO_PATH.read_text(encoding="utf-8")) if MODEL_INFO_PATH.exists() else {}
-    if info.get("classes", list(CLASSES)) != list(CLASSES):
+    trained = info.get("classes", list(CLASSES))
+    if trained != list(CLASSES[:len(trained)]):      # a model may lack the newest classes; they are then labelled by hand
         raise SystemExit("The trained model uses other classes than this workflow. Retrain it with train_label_model.py.")
     return booster, info
 

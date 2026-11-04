@@ -3,10 +3,10 @@
 Levels (Oesau 2014, Cui 2019): z-histogram of horizontal-normal floor and ceiling points, 1 cm bins, peaks.
 Directions (Cui 2019, Wei 2023): histogram of horizontal normals modulo 90 degrees.
 Faces: for each direction, 1 cm histogram of the offset along the normal, peaks, inlier band +-3 cm,
-       runs along the axis split at gaps. Faces are found separately on wall and window points; the
-       window points give the glass walls (interior glass walls and glass facade).
+       runs along the axis split at gaps. Faces are found separately on wall, curtain wall and window
+       points; the label decides what a glazed run becomes.
 Slabs: a face with normal -n at p and a face with normal +n at q (q - p in 0.04-0.45 m, overlapping) form
-       one wall with measured thickness; a glass pair may be only a few cm apart. Unpaired faces are
+       one wall with measured thickness; a glazed pair may be only a few cm apart. Unpaired faces are
        single-sided walls whose thickness is decided in the rooms stage.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, maximum_filter1d
 
-from ..classes import CEILING, COLUMN, FLOOR, PARTITION, WALL, WINDOW
+from ..classes import CEILING, COLUMN, CURTAIN_WALL, FLOOR, PARTITION, WALL, WINDOW
 from .context import ModelContext
 
 GAP_SPLIT, BAND, MIN_LEN, MIN_POINTS = 0.5, 0.03, 0.3, 300
@@ -24,6 +24,7 @@ RAY_PIXEL = 0.02
 WALL_THICKNESS_RANGE = (0.04, 0.45)
 GLASS_THICKNESS_RANGE = (-0.03, 0.15)
 GLASS_MIN_THICKNESS = 0.06
+GLAZED = ("glass_wall", "window_run")
 
 
 def histogram_peaks(values: np.ndarray, step: float = 0.01, min_share: float = 0.05) -> List[Tuple[float, float]]:
@@ -61,7 +62,7 @@ class LineOfSight:
         self.x0, self.y0 = points[:, 0].min() - 0.5, points[:, 1].min() - 0.5
         shape = (int((points[:, 0].max() + 0.5 - self.x0) / RAY_PIXEL) + 1, int((points[:, 1].max() + 0.5 - self.y0) / RAY_PIXEL) + 1)
         self.blocked = np.zeros(shape, bool)
-        mask = np.isin(labels, [WALL, WINDOW, COLUMN]) & (points[:, 2] > floor_z + 0.5) & (points[:, 2] < floor_z + 2.4)
+        mask = np.isin(labels, [WALL, WINDOW, CURTAIN_WALL, COLUMN]) & (points[:, 2] > floor_z + 0.5) & (points[:, 2] < floor_z + 2.4)
         cells = ((points[mask, :2] - [self.x0, self.y0]) / RAY_PIXEL).astype(int)
         self.blocked[cells[:, 0], cells[:, 1]] = True
 
@@ -162,13 +163,13 @@ def pair_slabs(faces: List[dict]) -> List[dict]:
         f, g = faces[i], faces[j]
         used |= {i, j}
         o0, o1 = -f["o"], g["o"]
-        if g["kind"] == "glass_wall" and o1 - o0 < GLASS_MIN_THICKNESS:   # at least the frame depth, centred on the two faces
+        if g["kind"] in GLAZED and o1 - o0 < GLASS_MIN_THICKNESS:   # at least the frame depth, centred on the two faces
             centre = (o0 + o1) / 2
             o0, o1 = centre - GLASS_MIN_THICKNESS / 2, centre + GLASS_MIN_THICKNESS / 2
         slabs.append(dict(fam=g["fam"], n=g["n"], d=g["d"], o0=o0, o1=o1, t0=min(span[0], g["t0"]), t1=max(span[1], g["t1"]),
                           faces=[i, j], paired=True, kind=g["kind"]))
     for i, f in enumerate(faces):
-        if i not in used and f["t1"] - f["t0"] >= (1.0 if f["kind"] == "glass_wall" else 0.5):
+        if i not in used and f["t1"] - f["t0"] >= (1.0 if f["kind"] in GLAZED else 0.5):
             slabs.append(dict(fam=f["fam"], n=f["n"], d=f["d"], o0=None, o1=f["o"], t0=f["t0"], t1=f["t1"], faces=[i], paired=False, kind=f["kind"]))
 
     def on_paired_face(slab: dict) -> bool:
@@ -180,7 +181,7 @@ def pair_slabs(faces: List[dict]) -> List[dict]:
                     return True
         return False
 
-    return [s for s in slabs if not (not s["paired"] and on_paired_face(s)) and not (s["kind"] == "glass_wall" and s["t1"] - s["t0"] < 1.0)]
+    return [s for s in slabs if not (not s["paired"] and on_paired_face(s)) and not (s["kind"] in GLAZED and s["t1"] - s["t0"] < 1.0)]
 
 
 def plot(ctx: ModelContext, points: np.ndarray, floor_z: float, slabs: List[dict]) -> None:
@@ -199,7 +200,7 @@ def plot(ctx: ModelContext, points: np.ndarray, floor_z: float, slabs: List[dict
     ax.plot([], [], c="#1f77b4", label="single face")
     ax.legend()
     ax.set_aspect("equal")
-    ax.set_title("Wall and glass-wall faces")
+    ax.set_title("Wall and glazing faces")
     fig.tight_layout()
     fig.savefig(ctx.output / "plan_faces.png", dpi=80)
     plt.close(fig)
@@ -213,8 +214,8 @@ def run(ctx: ModelContext) -> None:
     ctx.log(f"floor level {floor_z:.3f} m; ceiling levels {[round(z, 3) for z in ceilings]} m")
 
     vertical = np.abs(normals[:, 2]) < 0.2
-    masks = {"wall": (labels == WALL) & vertical, "glass_wall": (labels == WINDOW) & vertical}
-    families = dominant_directions(normals[np.isin(labels, [WALL, WINDOW, PARTITION]) & vertical])
+    masks = {"wall": (labels == WALL) & vertical, "glass_wall": (labels == CURTAIN_WALL) & vertical, "window_run": (labels == WINDOW) & vertical}
+    families = dominant_directions(normals[np.isin(labels, [WALL, WINDOW, CURTAIN_WALL, PARTITION]) & vertical])
     ctx.log(f"dominant directions (mod 90): {[round(f, 2) for f in families]} deg")
 
     sight = LineOfSight(points, labels, floor_z, ctx.stations[:, :2])

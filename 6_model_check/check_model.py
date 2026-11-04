@@ -35,7 +35,7 @@ import open3d as o3d
 from shapely.geometry import LineString, Polygon
 from sklearn.cluster import DBSCAN
 
-from scan2bim.classes import CEILING, CLASSES, COLUMN, DOOR, FLOOR, PARTITION, WALL, WINDOW
+from scan2bim.classes import CEILING, CLASSES, COLUMN, CURTAIN_WALL, DOOR, FLOOR, PARTITION, WALL, WINDOW
 from scan2bim.plyio import read_ply
 
 SAMPLE_PER_CLASS = 300_000
@@ -51,7 +51,9 @@ def element_group(product) -> str:
         return "floor"
     if product.is_a("IfcCovering"):
         return "ceiling"
-    if product.is_a("IfcCurtainWall") or product.is_a("IfcWindow"):
+    if product.is_a("IfcCurtainWall"):
+        return "curtain_wall"
+    if product.is_a("IfcWindow"):
         return "window"
     if product.is_a("IfcDoor"):
         return "door"
@@ -191,9 +193,9 @@ def main() -> None:
 
     meshes, failed = build_meshes(model)
     log(f"2. Geometry: {sum(len(v) for v in meshes.values())} elements built, {len(failed)} failed")
-    for name in ("floor", "ceiling", "wall", "door", "window", "column", "partition"):
-        log(f"   {name:10s}{len(meshes.get(name, [])):5d}")
-    log(f"   of the windows, {len(model.by_type('IfcCurtainWall'))} are curtain walls; spaces: {len(model.by_type('IfcSpace'))}")
+    for name in ("floor", "ceiling", "wall", "door", "window", "curtain_wall", "column", "partition"):
+        log(f"   {name:13s}{len(meshes.get(name, [])):5d}")
+    log(f"   spaces: {len(model.by_type('IfcSpace'))}")
     for item in failed[:20]:
         log(f"   {item}")
 
@@ -215,18 +217,18 @@ def main() -> None:
     xyz = np.c_[data["x"], data["y"], data["z"]].astype(np.float64)
     labels = data["label"]
     log("5. Labelled points near elements of their class (sample per class)")
-    log(f"   {'class':10s}{'points':>12s}{'median cm':>11s}" + "".join(f"{f'<= {d * 100:.0f} cm':>10s}" for d in DISTANCES_M))
+    log(f"   {'class':13s}{'points':>12s}{'median cm':>11s}" + "".join(f"{f'<= {d * 100:.0f} cm':>10s}" for d in DISTANCES_M))
     rng = np.random.default_rng(0)
-    targets = {FLOOR: ("floor",), CEILING: ("ceiling",), WALL: ("wall",), DOOR: ("door",), WINDOW: ("window",), COLUMN: ("column",), PARTITION: ("partition",)}
+    targets = {FLOOR: ("floor",), CEILING: ("ceiling",), WALL: ("wall",), DOOR: ("door",), WINDOW: ("window",), CURTAIN_WALL: ("curtain_wall",), COLUMN: ("column",), PARTITION: ("partition",)}
     for value, names in targets.items():
         members = xyz[labels == value]
         if len(members) == 0:
-            log(f"   {CLASSES[value]:10s}{0:12,}")
+            log(f"   {CLASSES[value]:13s}{0:12,}")
             continue
         sample = members[rng.choice(len(members), min(SAMPLE_PER_CLASS, len(members)), replace=False)]
         distance = distances_to(meshes, names, sample)
         shares = "".join(f"{100 * (distance <= d).mean():9.1f}%" for d in DISTANCES_M)
-        log(f"   {CLASSES[value]:10s}{len(members):12,}{100 * np.median(distance):11.1f}{shares}")
+        log(f"   {CLASSES[value]:13s}{len(members):12,}{100 * np.median(distance):11.1f}{shares}")
 
     log(f"6. Groups of labelled points with a modelled element within {NEAR_ELEMENT_M} m (at least {GROUP_MIN_POINTS} points)")
     for value, names in ((DOOR, ("door",)), (COLUMN, ("column",))):

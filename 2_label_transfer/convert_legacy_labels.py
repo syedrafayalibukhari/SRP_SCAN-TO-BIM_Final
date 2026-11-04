@@ -28,8 +28,8 @@ def main() -> None:
         raise SystemExit("The target must be a new file; the source file is never changed.")
     data = read_ply(args.source, required=("x", "y", "z", "label"))
     values = np.unique(data["label"])
-    if values[values != UNKNOWN].max(initial=0) < 8:
-        raise SystemExit(f"{args.source.name} has no label above 7; it does not look like a twelve-class file.")
+    if values[values != UNKNOWN].max(initial=0) < 9:
+        raise SystemExit(f"{args.source.name} has no label above 8; it does not look like a twelve-class file.")
     data = data.copy()
     data["label"] = legacy_lookup()[data["label"]]
     write_ply(args.target, data, [f"classes: {' '.join(CLASSES)}", f"converted from {args.source.name}"])

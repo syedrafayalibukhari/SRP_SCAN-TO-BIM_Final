@@ -6,7 +6,9 @@ What it does
   using the trained model in the "model" folder. No training is needed. Then writes the floor as
   tiles or as one file, ready for manual correction in step 3.
 
-  Classes: floor, ceiling, wall, door, window (glass walls included), column, partition, other.
+  Classes: floor, ceiling, wall, door, window, column, partition, other, curtain wall.
+  The curtain wall class is only predicted after the model is retrained on floors labelled with it.
+  Until then, glass walls start as window; change them to curtain wall in step 3.
 
 1. Choose tiling
    Open label_transfer.py in a text editor and find near the top:

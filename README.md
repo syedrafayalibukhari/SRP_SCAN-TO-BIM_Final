@@ -2,7 +2,7 @@
 
 Turns a terrestrial laser scan of an existing office floor (`.e57`) into an IFC4 BIM model, using open and license-free tools.
 
-The model contains seven element types and the rooms:
+The model contains eight element types and the rooms:
 
 | Element | IFC class |
 |---|---|
@@ -10,12 +10,13 @@ The model contains seven element types and the rooms:
 | Ceiling | `IfcCovering` (CEILING) |
 | Wall | `IfcWall` (STANDARD) |
 | Door | `IfcDoor` |
-| Window, including glass walls | `IfcWindow`, `IfcCurtainWall` |
+| Window | `IfcWindow` |
+| Curtain wall (glass wall) | `IfcCurtainWall` |
 | Column | `IfcColumn` |
 | Partition (cubicle panel) | `IfcWall` (PARTITIONING) |
 | Room | `IfcSpace` |
 
-Glass panels and window bands are exported as `IfcCurtainWall`. A door is cut into its wall or glass panel, or fills the gap between two elements.
+The label decides between a window and a curtain wall. A door is cut into its wall or glass panel, or fills the gap between two elements.
 
 ## Workflow
 
@@ -75,7 +76,7 @@ Each script accepts `--help`.
 
 ## Label classes
 
-`0` floor, `1` ceiling, `2` wall, `3` door, `4` window (glass walls included), `5` column, `6` partition, `7` other, `255` unknown.
+`0` floor, `1` ceiling, `2` wall, `3` door, `4` window, `5` column, `6` partition, `7` other, `8` curtain wall, `255` unknown.
 
 Furniture, equipment and clutter are labelled `other` and are not modelled. A floor labelled with the earlier twelve classes is converted with `2_label_transfer/convert_legacy_labels.py`.
 

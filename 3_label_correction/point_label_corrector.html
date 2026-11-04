@@ -86,7 +86,7 @@
       <b>Mouse:</b> left-drag rotate · right-drag pan · wheel zoom<br>
       <b>Fix labels:</b> press <kbd>L</kbd>, drag a loop around wrong points, then click a class (or press its key).<br>
       Only <i>visible</i> points are selected — use the height sliders and eye toggles.<br>
-      <b>Keys:</b> <kbd>0</kbd>–<kbd>7</kbd> classes, <kbd>U</kbd> unknown (ignored)
+      <b>Keys:</b> <kbd>0</kbd>–<kbd>8</kbd> classes, <kbd>U</kbd> unknown (ignored)
     </div>
   </div>
 </div>
@@ -96,12 +96,12 @@
 <script>
 "use strict";
 // ---------- classes ----------
-const CLASSES = ["floor","ceiling","wall","door","window","column","partition","other","unknown (ignore)"];
-const LABEL_VALUE = [0,1,2,3,4,5,6,7,255];          // value written to file (255 = ignore)
-const COLORS = ["#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#9467bd","#7f7f7f","#e6e6e6"];
-const KEYS = ["0","1","2","3","4","5","6","7","u"];
+const CLASSES = ["floor","ceiling","wall","door","window","column","partition","other","curtain_wall","unknown (ignore)"];
+const LABEL_VALUE = [0,1,2,3,4,5,6,7,8,255];          // value written to file (255 = ignore)
+const COLORS = ["#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#9467bd","#7f7f7f","#17becf","#e6e6e6"];
+const KEYS = ["0","1","2","3","4","5","6","7","8","u"];
 const NCLS = CLASSES.length;
-const slotOf = v => v < 8 ? v : 8;          // label value -> class slot
+const slotOf = v => v < 9 ? v : 9;          // label value -> class slot
 
 // ---------- state ----------
 let N = 0, pos, rgb, lab, conf, idx = null, tile = null, extra = {};
@@ -136,7 +136,7 @@ const material = new THREE.ShaderMaterial({
     uniform float uHid[${NCLS}]; uniform vec3 uPal[${NCLS}];
     varying vec3 vCol;
     void main() {
-      int s = aLab > 7.5 ? 8 : int(aLab + 0.5);
+      int s = aLab > 8.5 ? 9 : int(aLab + 0.5);
       bool hide = uHid[s] > 0.5 || position.z < uZmin || position.z > uZmax || aConf > uCmax;
       if (hide) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); return; }
       vec4 mv = modelViewMatrix * vec4(position, 1.0);

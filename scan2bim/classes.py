@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import numpy as np
 
-CLASSES = ("floor", "ceiling", "wall", "door", "window", "column", "partition", "other")
-FLOOR, CEILING, WALL, DOOR, WINDOW, COLUMN, PARTITION, OTHER = range(len(CLASSES))
+CLASSES = ("floor", "ceiling", "wall", "door", "window", "column", "partition", "other", "curtain_wall")
+FLOOR, CEILING, WALL, DOOR, WINDOW, COLUMN, PARTITION, OTHER, CURTAIN_WALL = range(len(CLASSES))
 UNKNOWN = 255
 
-COLOURS = ("#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#9467bd", "#7f7f7f")
+COLOURS = ("#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#9467bd", "#7f7f7f", "#17becf")
 
 # Twelve-class scheme of the first CUB labelling. Furniture, equipment and clutter become "other".
 LEGACY_CLASSES = ("floor", "ceiling", "wall", "door", "window", "column", "desk", "chair", "monitor",

@@ -1,7 +1,8 @@
 """Build the IFC4 model from the parametric component description alone.
 
     Wall type           IfcWallType with a material layer set; glass walls use IfcCurtainWallType
-    Wall                IfcWall (STANDARD or PARTITIONING) or IfcCurtainWall, with 'Axis' and 'Body' representations
+    Wall                IfcWall (STANDARD or PARTITIONING), IfcCurtainWall, or IfcWindow for a window run,
+                        with 'Axis' and 'Body' representations
     Door, window type   IfcDoorType, IfcWindowType with parametric geometry (lining and leaf, frame and glass)
     Door, window        IfcOpeningElement in the host wall plus IfcDoor or IfcWindow; the type geometry is stretched
                         when the occurrence has its own size; windows in walls with space on one side sit at that face;
@@ -143,6 +144,8 @@ class IfcBuilder:
             name = f"{t['id']} {t['function']} {thickness * 1000:.0f} mm"
             if t["function"] == "glass_wall":
                 entity = f.createIfcCurtainWallType(self.guid(), None, name, t["evidence"], None, None, None, None, None, "NOTDEFINED")
+            elif t["function"] == "window_run":
+                entity = f.createIfcWindowType(self.guid(), None, name, t["evidence"], None, None, None, None, None, "WINDOW", "SINGLE_PANEL", False, None)
             else:
                 predefined = "PARTITIONING" if t["function"] == "partition" else "STANDARD"
                 entity = f.createIfcWallType(self.guid(), None, name, t["evidence"], None, None, None, None, None, predefined)
@@ -186,8 +189,12 @@ class IfcBuilder:
             axis = f.createIfcShapeRepresentation(self.axis_context, "Axis", "Curve2D", [f.createIfcPolyline([self.point2(0, 0), self.point2(length, 0)])])
             body = f.createIfcShapeRepresentation(self.body_context, "Body", "SweptSolid", [self.box(length / 2, 0, 0, length, kind["thickness"], wall["height"])])
             shape = f.createIfcProductDefinitionShape(None, None, [axis, body])
-            external = kind["function"] == "exterior" or (kind["function"] == "glass_wall" and wall["spaceSide"] != "both")
-            if kind["function"] == "glass_wall":
+            external = kind["function"] == "exterior" or (kind["function"] in ("glass_wall", "window_run") and wall["spaceSide"] != "both")
+            if kind["function"] == "window_run":
+                entity = f.create_entity("IfcWindow", GlobalId=self.guid(), Name=wall["name"], Tag=wall["id"], ObjectPlacement=placement, Representation=shape,
+                                         OverallHeight=wall["height"], OverallWidth=length, PredefinedType="WINDOW")
+                self.properties(entity, "Pset_WindowCommon", {"Reference": wall["typeID"], "IsExternal": external})
+            elif kind["function"] == "glass_wall":
                 entity = f.createIfcCurtainWall(self.guid(), None, wall["name"], None, None, placement, shape, wall["id"], "NOTDEFINED")
                 self.properties(entity, "Pset_CurtainWallCommon", {"Reference": wall["typeID"], "IsExternal": external})
             else:

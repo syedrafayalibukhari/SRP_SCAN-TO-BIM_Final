@@ -3,10 +3,10 @@ STEP 5 - MODELLING
 
 What it does
   Reconstructs the building elements from the labelled floor and the scanner positions and writes
-  one IFC4 model with floor, ceiling, walls, doors, windows and glass walls, columns, partitions and
+  one IFC4 model with floor, ceiling, walls, doors, windows, curtain walls, columns, partitions and
   rooms (IfcSpace):
     1  normals for every point
-    2  floor and ceiling levels, wall and glass-wall faces
+    2  floor and ceiling levels, wall and glazing faces
     3  room footprints
     4  doors from door points, windows in walls
     5  columns and partitions
@@ -42,7 +42,8 @@ Notes
     in its doorway. It is cut into the wall or glass panel when one runs through the doorway;
     otherwise it fills the gap between the two elements.
   - A group of door points must exist: a doorway without door points is not modelled.
-  - A glazed run that starts above the floor is a window band with a measured sill and head.
-    Nothing is modelled below it, because the scan does not show what is there.
+  - Window points become IfcWindow and curtain wall points become IfcCurtainWall. A glazed run
+    that starts above the floor has a measured sill and head. Nothing is modelled below it,
+    because the scan does not show what is there.
   - Wall thickness is measured when both faces were scanned. Otherwise it is assumed; the element
     property "Source" says which.

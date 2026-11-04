@@ -4,7 +4,7 @@ Every component is a type (shared parameters) plus occurrences (instance paramet
 grouping measured instances. The description is written as components.json and components.gml; the IFC
 model is built from it alone, without reading the point cloud.
 
-    Wall types / walls        function (exterior, interior, glass_wall, partition), thickness, centre line, height
+    Wall types / walls        function (exterior, interior, glass_wall, window_run, partition), thickness, centre line, height
     Door and window types     width, height, sill; occurrences are hosted by a wall or glass wall at an offset
                               along it; a door in a gap between elements has its own location and rotation
     Spaces                    room name, boundary polygon, height
@@ -26,10 +26,10 @@ from .cleanup import clean_elements, rectangle
 from .context import ModelContext
 
 FLOOR_THICKNESS, CEILING_THICKNESS = 0.2, 0.02
-WALL_MATERIALS = {"exterior": "Exterior wall (material not observable)", "interior": "Interior wall", "glass_wall": "Glass", "partition": "Workstation panel"}
+WALL_MATERIALS = {"exterior": "Exterior wall (material not observable)", "interior": "Interior wall", "glass_wall": "Glass", "window_run": "Glass", "partition": "Workstation panel"}
 HOST_ANGLE, HOST_DISTANCE = 10.0, 0.12
 MIN_SWING_ANGLE, HINGE_DISTANCE = 45.0, 0.25
-NAMES = {"exterior": "Wall", "interior": "Wall", "glass_wall": "Glass wall", "partition": "Partition"}
+NAMES = {"exterior": "Wall", "interior": "Wall", "glass_wall": "Curtain wall", "window_run": "Window", "partition": "Partition"}
 
 
 def r3(value: float) -> float:
@@ -58,7 +58,7 @@ def ring(line) -> List[List[float]]:
 def describe_walls(elements: List[dict], room_polygons: list) -> Tuple[List[dict], List[dict], List[dict]]:
     walls = [x for x in elements if x["kind"] != "column"]
     for x in walls:
-        x["function"] = x["kind"] if x["kind"] in ("partition", "glass_wall") else ("interior" if x["paired"] else "exterior")
+        x["function"] = x["kind"] if x["kind"] in ("partition", "glass_wall", "window_run") else ("interior" if x["paired"] else "exterior")
     types = []
     for function in WALL_MATERIALS:
         members = [x for x in walls if x["function"] == function]
@@ -70,7 +70,7 @@ def describe_walls(elements: List[dict], room_polygons: list) -> Tuple[List[dict
             if assumed:
                 evidence = "assumed thickness (only one face scanned)"
             else:
-                evidence = "glass panel, 6 cm frame depth assumed" if function == "glass_wall" else "measured from two faces"
+                evidence = "glass panel, 6 cm frame depth assumed" if function in ("glass_wall", "window_run") else "measured from two faces"
             types.append(dict(id=type_id, function=function, thickness=r3(mean[0]), height=r3(mean[1]), material=WALL_MATERIALS[function], evidence=evidence))
             for i in index:
                 members[i]["typeID"] = type_id
@@ -86,7 +86,7 @@ def describe_walls(elements: List[dict], room_polygons: list) -> Tuple[List[dict
             return any(p.contains(probe) for p in room_polygons)
 
         side = "both" if has_space(1) and has_space(-1) else ("left" if has_space(1) else ("right" if has_space(-1) else "none"))
-        label = "Window band" if x["base"] > 0 else NAMES[x["function"]]
+        label = NAMES[x["function"]]
         counters[label] = counters.get(label, 0) + 1
         x["id"] = f"W{k + 1:03d}"
         occurrences.append(dict(id=x["id"], name=f"{label} {counters[label]:03d}", typeID=x["typeID"], start=[r3(start[0]), r3(start[1])], end=[r3(end[0]), r3(end[1])],
@@ -150,7 +150,7 @@ def door_host(leaf: dict, walls: List[dict]) -> Optional[dict]:
     centre, d = np.array(leaf["c"]), np.array(leaf["d"])
     half = leaf["width"] / 2
     for x in walls:
-        if x["function"] == "partition" or abs(x["d"] @ d) < np.cos(np.radians(HOST_ANGLE)):
+        if x["function"] in ("partition", "window_run") or abs(x["d"] @ d) < np.cos(np.radians(HOST_ANGLE)):
             continue
         along = centre @ x["d"]
         overlap = min(along + half, x["t1"]) - max(along - half, x["t0"])
@@ -165,7 +165,7 @@ def describe_openings(openings: dict, slabs: List[dict], walls: List[dict]) -> T
         slab = slabs[opening["slab"]]
         d, n = np.array(slab["d"]), np.array(slab["n"])
         centre = d * (opening["t0"] + opening["t1"]) / 2 + n * (slab["o0"] + slab["o1"]) / 2
-        hosts = [x for x in walls if x["function"] != "partition" and abs(x["d"] @ d) > 0.99]
+        hosts = [x for x in walls if x["function"] not in ("partition", "window_run") and abs(x["d"] @ d) > 0.99]
         host = min(hosts, key=lambda x: abs(centre @ x["n"] - x["o"]) + max(0, x["t0"] - centre @ x["d"], centre @ x["d"] - x["t1"]))
         items.append(dict(kind="window", wall=host, offset=float(centre @ host["d"] - host["t0"]), W=opening["width"], H=opening["height"], sill=opening["z0"]))
     for door in openings["doors"]:
@@ -274,7 +274,7 @@ def write_element_list(ctx: ModelContext, description: dict) -> None:
         for wall in description["Walls"]:
             kind = types[wall["typeID"]]["function"]
             start, end = np.array(wall["start"]), np.array(wall["end"])
-            writer.writerow([wall["name"], "wall" if kind in ("interior", "exterior") else kind, *np.round((start + end) / 2, 3),
+            writer.writerow([wall["name"], {"interior": "wall", "exterior": "wall", "glass_wall": "curtain wall", "window_run": "window"}.get(kind, kind), *np.round((start + end) / 2, 3),
                              r3(np.linalg.norm(end - start)), types[wall["typeID"]]["thickness"], wall["height"], wall["source"]])
         for section, kind in (("Doors", "door"), ("Windows", "window")):
             for item in description[section]:
@@ -290,7 +290,7 @@ def plot(ctx: ModelContext, description: dict) -> None:
 
     fig, ax = plt.subplots(figsize=(18, 12))
     types = {t["id"]: t for t in description["WallTypes"]}
-    colours = {"exterior": "#333333", "interior": "#333333", "glass_wall": "#1f9ed1", "partition": "#2ca02c"}
+    colours = {"exterior": "#333333", "interior": "#333333", "glass_wall": "#1f9ed1", "window_run": "#e377c2", "partition": "#2ca02c"}
     walls = {w["id"]: w for w in description["Walls"]}
     for wall in description["Walls"]:
         start, end = np.array(wall["start"]), np.array(wall["end"])
@@ -317,7 +317,7 @@ def plot(ctx: ModelContext, description: dict) -> None:
         centre = np.array(column["location"])
         ax.add_patch(PolygonPatch(np.array([centre + sx * d * kind["width"] / 2 + sy * n * kind["depth"] / 2 for sx, sy in
                                             ((-1, -1), (1, -1), (1, 1), (-1, 1))]), fc="#d62728"))
-    for name, colour in (("wall", "#333333"), ("glass wall", "#1f9ed1"), ("partition", "#2ca02c"), ("door", "#ff7f0e"), ("window", "#e377c2"), ("column", "#d62728")):
+    for name, colour in (("wall", "#333333"), ("curtain wall", "#1f9ed1"), ("partition", "#2ca02c"), ("door", "#ff7f0e"), ("window", "#e377c2"), ("column", "#d62728")):
         ax.plot([], [], c=colour, lw=4, label=name)
     ax.legend(loc="lower right")
     ax.set_aspect("equal")
