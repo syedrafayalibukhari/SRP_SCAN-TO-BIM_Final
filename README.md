@@ -15,7 +15,7 @@ The model contains seven element types and the rooms:
 | Partition (cubicle panel) | `IfcWall` (PARTITIONING) |
 | Room | `IfcSpace` |
 
-Glass panels and window bands are exported as `IfcCurtainWall`. Doors are cut into their wall or glass panel.
+Glass panels and window bands are exported as `IfcCurtainWall`. A door is cut into its wall or glass panel, or fills the gap between two elements.
 
 ## Workflow
 
