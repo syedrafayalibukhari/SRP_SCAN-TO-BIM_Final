@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Point Label Corrector</title>
+<style>
+  :root { --bg:#14161a; --panel:#1e2128; --text:#e6e6e6; --muted:#9aa0a6; --accent:#4f8cff; --border:#2c3038; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; overflow:hidden; }
+  #app { display:flex; height:100vh; }
+  #side { width:280px; background:var(--panel); border-right:1px solid var(--border); padding:12px; overflow-y:auto; }
+  #view { flex:1; position:relative; }
+  canvas#gl, canvas#lasso { position:absolute; inset:0; width:100%; height:100%; }
+  canvas#lasso { pointer-events:none; }
+  h1 { font-size:15px; margin:0 0 8px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:14px 0 6px; }
+  button, input[type=file] { font:inherit; }
+  button { background:#2a2e36; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px; }
+  .cls { display:grid; gap:4px; }
+  .cls .row { margin:0; flex-wrap:nowrap; }
+  .cls button.c { flex:1; display:flex; align-items:center; gap:8px; text-align:left; }
+  .sw { width:14px; height:14px; border-radius:3px; flex:none; }
+  .cnt { margin-left:auto; color:var(--muted); font-size:11px; }
+  .vis { width:24px; padding:2px; flex:none; text-align:center; }
+  label.sl { display:block; color:var(--muted); margin-top:4px; }
+  input[type=range] { width:100%; }
+  #status { position:absolute; left:10px; bottom:10px; background:rgba(0,0,0,.65); padding:6px 10px; border-radius:6px; font-size:12px; max-width:70%; }
+  #help { position:absolute; right:10px; top:10px; background:rgba(0,0,0,.6); padding:8px 10px; border-radius:6px; font-size:12px; color:#ccc; max-width:290px; }
+  kbd { background:#333; border-radius:3px; padding:0 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h1>Point Label Corrector</h1>
+    <div class="row"><input type="file" id="file" accept=".ply"></div>
+    <div id="fname" style="color:var(--muted);font-size:11px"></div>
+
+    <h2>Colour by</h2>
+    <div class="row">
+      <button data-mode="0" class="on">Label</button>
+      <button data-mode="1">RGB</button>
+      <button data-mode="2">Confidence</button>
+    </div>
+
+    <h2>Show</h2>
+    <label class="sl">Height min: <span id="zminv">–</span> m</label>
+    <input type="range" id="zmin" min="0" max="1000" value="0">
+    <label class="sl">Height max: <span id="zmaxv">–</span> m</label>
+    <input type="range" id="zmax" min="0" max="1000" value="1000">
+    <label class="sl">Only confidence below: <span id="cmaxv">1.00</span></label>
+    <input type="range" id="cmax" min="0" max="100" value="100">
+    <label class="sl">Point size: <span id="psv">1.0</span></label>
+    <input type="range" id="ps" min="5" max="60" value="10">
+
+    <h2>Assign class to selection</h2>
+    <div class="cls" id="classes"></div>
+
+    <h2>Selection</h2>
+    <div class="row">
+      <button id="lassoBtn">Lasso (L)</button>
+      <button id="clearSel">Clear (Esc)</button>
+    </div>
+    <div class="row">
+      <button id="undo">Undo (Ctrl+Z)</button>
+      <button id="save" style="background:#2e7d32;border-color:#2e7d32">Save corrected PLY</button>
+    </div>
+    <h2>Views</h2>
+    <div class="row">
+      <button data-view="top">Top</button>
+      <button data-view="front">Front</button>
+      <button data-view="side">Side</button>
+      <button data-view="reset">Reset</button>
+    </div>
+  </div>
+  <div id="view">
+    <canvas id="gl"></canvas>
+    <canvas id="lasso"></canvas>
+    <div id="status">Open a .ply file to start (works up to ~20 M points).</div>
+    <div id="help">
+      <b>Mouse:</b> left-drag rotate · right-drag pan · wheel zoom<br>
+      <b>Fix labels:</b> press <kbd>L</kbd>, drag a loop around wrong points, then click a class (or press its key).<br>
+      Only <i>visible</i> points are selected — use the height sliders and eye toggles.<br>
+      <b>Keys:</b> <kbd>0</kbd>–<kbd>7</kbd> classes, <kbd>U</kbd> unknown (ignored)
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+"use strict";
+// ---------- classes ----------
+const CLASSES = ["floor","ceiling","wall","door","window","column","partition","other","unknown (ignore)"];
+const LABEL_VALUE = [0,1,2,3,4,5,6,7,255];          // value written to file (255 = ignore)
+const COLORS = ["#1f77b4","#aec7e8","#ff7f0e","#ffbb78","#2ca02c","#98df8a","#9467bd","#7f7f7f","#e6e6e6"];
+const KEYS = ["0","1","2","3","4","5","6","7","u"];
+const NCLS = CLASSES.length;
+const slotOf = v => v < 8 ? v : 8;          // label value -> class slot
+
+// ---------- state ----------
+let N = 0, pos, rgb, lab, conf, idx = null, tile = null, extra = {};
+let sel, nsel = 0, fileName = "", zLo = 0, zHi = 1, hasConf = false;
+const hidden = new Float32Array(NCLS); hidden[1] = 1;              // ceiling hidden by default
+const undoStack = [];
+const center = new THREE.Vector3();
+const st = document.getElementById("status");
+const $ = id => document.getElementById(id);
+
+// ---------- renderer ----------
+const canvas = $("gl");
+const renderer = new THREE.WebGLRenderer({canvas, antialias:false, powerPreference:"high-performance"});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x14161a);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 5000); camera.up.set(0,0,1);
+const controls = new THREE.OrbitControls(camera, canvas); controls.enableDamping = false;
+let points = null, geom = null;
+let dirty = true;
+controls.addEventListener("change", () => dirty = true);
+
+const palette = COLORS.map(h => new THREE.Vector3(parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255));
+const uniforms = {
+  uMode:{value:0}, uZmin:{value:-1e9}, uZmax:{value:1e9}, uCmax:{value:1.01},
+  uHid:{value:hidden}, uPal:{value:palette}, uSize:{value:0.02}, uScale:{value:500}
+};
+const material = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader: `
+    attribute vec3 aRgb; attribute float aLab; attribute float aConf; attribute float aSel;
+    uniform float uMode, uZmin, uZmax, uCmax, uSize, uScale;
+    uniform float uHid[${NCLS}]; uniform vec3 uPal[${NCLS}];
+    varying vec3 vCol;
+    void main() {
+      int s = aLab > 7.5 ? 8 : int(aLab + 0.5);
+      bool hide = uHid[s] > 0.5 || position.z < uZmin || position.z > uZmax || aConf > uCmax;
+      if (hide) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; vCol = vec3(0.0); return; }
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = max(1.0, uSize * uScale / -mv.z);
+      if (aSel > 0.5) vCol = vec3(1.0, 1.0, 0.2);
+      else if (uMode < 0.5) vCol = uPal[s];
+      else if (uMode < 1.5) vCol = aRgb;
+      else { float t = clamp((aConf - 0.3) / 0.7, 0.0, 1.0); vCol = vec3(1.0 - t, t, 0.15); }
+    }`,
+  fragmentShader: `varying vec3 vCol; void main() { gl_FragColor = vec4(vCol, 1.0); }`
+});
+
+function resize() {
+  const v = $("view"), w = v.clientWidth, h = v.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  uniforms.uScale.value = h * renderer.getPixelRatio() / (2 * Math.tan(camera.fov * Math.PI / 360));
+  $("lasso").width = w; $("lasso").height = h; dirty = true;
+}
+window.addEventListener("resize", resize); resize();
+(function loop() { requestAnimationFrame(loop); if (dirty) { renderer.render(scene, camera); dirty = false; } })();
+
+// ---------- PLY reading (fast, chunked) ----------
+const SIZE = {char:1,uchar:1,int8:1,uint8:1,short:2,ushort:2,int16:2,uint16:2,int:4,uint:4,int32:4,uint32:4,float:4,float32:4,double:8,float64:8};
+function reader(type) {
+  switch (type) {
+    case "float": case "float32": return (dv,o) => dv.getFloat32(o, true);
+    case "double": case "float64": return (dv,o) => dv.getFloat64(o, true);
+    case "uchar": case "uint8": return (dv,o) => dv.getUint8(o);
+    case "char": case "int8": return (dv,o) => dv.getInt8(o);
+    case "short": case "int16": return (dv,o) => dv.getInt16(o, true);
+    case "ushort": case "uint16": return (dv,o) => dv.getUint16(o, true);
+    case "int": case "int32": return (dv,o) => dv.getInt32(o, true);
+    case "uint": case "uint32": return (dv,o) => dv.getUint32(o, true);
+  }
+  throw new Error("Unsupported PLY type " + type);
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+async function loadBuffer(buf, name) {
+  const t0 = performance.now();
+  const head8 = new Uint8Array(buf, 0, Math.min(buf.byteLength, 65536));
+  const txt = new TextDecoder().decode(head8);
+  const hEnd = txt.indexOf("end_header");
+  if (hEnd < 0) throw new Error("Not a PLY file (no end_header)");
+  const dataStart = txt.indexOf("\n", hEnd) + 1;
+  const lines = txt.slice(0, hEnd).split(/\r?\n/);
+  if (!lines.some(l => l.startsWith("format binary_little_endian"))) throw new Error("Only binary little-endian PLY is supported");
+  let n = 0; const props = []; let inVertex = false;
+  for (const l of lines) {
+    const p = l.trim().split(/\s+/);
+    if (p[0] === "element") { inVertex = p[1] === "vertex"; if (inVertex) n = +p[2]; }
+    else if (p[0] === "property" && inVertex) props.push({type:p[1], name:p[2]});
+  }
+  let off = 0; for (const p of props) { p.off = off; off += SIZE[p.type]; p.read = reader(p.type); }
+  const stride = off, P = Object.fromEntries(props.map(p => [p.name, p]));
+  for (const k of ["x","y","z"]) if (!P[k]) throw new Error("Missing property " + k);
+  const R = P.red || P.r, G = P.green || P.g, B = P.blue || P.b;
+  const L = P.label || P.semantic_label || P.scalar_label || P.classification;
+  if (!L) throw new Error("No label property (label / semantic_label / classification) in this file");
+  if (buf.byteLength < dataStart + n * stride) throw new Error("File is truncated");
+
+  // allocate once
+  N = n; pos = new Float32Array(3*n); rgb = new Uint8Array(3*n); lab = new Uint8Array(n);
+  conf = new Float32Array(n); sel = new Uint8Array(n); nsel = 0; undoStack.length = 0;
+  hasConf = !!P.conf; idx = P.idx ? new Int32Array(n) : null; tile = P.tile ? new Uint8Array(n) : null;
+  const dv = new DataView(buf, dataStart);
+  const fx = P.x.read, fy = P.y.read, fz = P.z.read, ox = P.x.off, oy = P.y.off, oz = P.z.off;
+  const CH = 1000000;
+  let lo = Infinity, hi = -Infinity, sx = 0, sy = 0, sz = 0;
+  for (let s = 0; s < n; s += CH) {
+    const e = Math.min(n, s + CH);
+    for (let i = s; i < e; i++) {
+      const o = i * stride, j = 3*i;
+      const x = fx(dv, o+ox), y = fy(dv, o+oy), z = fz(dv, o+oz);
+      pos[j] = x; pos[j+1] = y; pos[j+2] = z; sx += x; sy += y; sz += z;
+      if (z < lo) lo = z; if (z > hi) hi = z;
+      if (R) { rgb[j] = R.read(dv, o+R.off); rgb[j+1] = G.read(dv, o+G.off); rgb[j+2] = B.read(dv, o+B.off); }
+      lab[i] = L.read(dv, o+L.off);
+      conf[i] = hasConf ? P.conf.read(dv, o+P.conf.off) : 1;
+      if (idx) idx[i] = P.idx.read(dv, o+P.idx.off);
+      if (tile) tile[i] = P.tile.read(dv, o+P.tile.off);
+    }
+    st.textContent = `Reading ${name}: ${Math.round(100*e/n)}%`; await tick();
+  }
+  zLo = lo; zHi = hi; center.set(sx/n, sy/n, sz/n); fileName = name;
+
+  // GPU buffers (no extra copies: attributes share the typed arrays)
+  if (points) { scene.remove(points); geom.dispose(); }
+  geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  geom.setAttribute("aRgb", new THREE.BufferAttribute(rgb, 3, true));
+  geom.setAttribute("aLab", new THREE.BufferAttribute(lab, 1));
+  geom.setAttribute("aConf", new THREE.BufferAttribute(conf, 1));
+  geom.setAttribute("aSel", new THREE.BufferAttribute(sel, 1));
+  points = new THREE.Points(geom, material); points.frustumCulled = false; scene.add(points);
+  buf = null;
+  $("fname").textContent = `${name} — ${n.toLocaleString()} points`;
+  syncEyes(); updateFilters(); setView("top"); updateCounts();
+  st.textContent = `Loaded ${n.toLocaleString()} points in ${((performance.now()-t0)/1000).toFixed(1)} s`;
+}
+$("file").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  st.textContent = "Reading " + f.name + " …"; await tick();
+  try { await loadBuffer(await f.arrayBuffer(), f.name); } catch (err) { st.textContent = "Error: " + err.message; console.error(err); }
+});
+const srcParam = new URLSearchParams(location.search).get("src");
+if (srcParam) fetch(srcParam).then(r => r.arrayBuffer()).then(b => loadBuffer(b, srcParam.split("/").pop()))
+  .catch(err => st.textContent = "Could not load " + srcParam + ": " + err.message);
+
+// ---------- writing ----------
+function writePLY() {
+  const hasTile = !!tile;
+  const head = `ply\nformat binary_little_endian 1.0\nelement vertex ${N}\n` +
+    `property float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n` +
+    `property uchar label\nproperty float conf\nproperty int idx\n` + (hasTile ? `property uchar tile\n` : ``) + `end_header\n`;
+  const hb = new TextEncoder().encode(head), stride = 24 + (hasTile ? 1 : 0);
+  const out = new ArrayBuffer(hb.length + N * stride); new Uint8Array(out).set(hb, 0);
+  const dv = new DataView(out, hb.length);
+  for (let i = 0; i < N; i++) {
+    const o = i * stride, j = 3*i;
+    dv.setFloat32(o, pos[j], true); dv.setFloat32(o+4, pos[j+1], true); dv.setFloat32(o+8, pos[j+2], true);
+    dv.setUint8(o+12, rgb[j]); dv.setUint8(o+13, rgb[j+1]); dv.setUint8(o+14, rgb[j+2]);
+    dv.setUint8(o+15, lab[i]); dv.setFloat32(o+16, conf[i], true); dv.setInt32(o+20, idx ? idx[i] : i, true);
+    if (hasTile) dv.setUint8(o+24, tile[i]);
+  }
+  return new Blob([out], {type:"application/octet-stream"});
+}
+$("save").onclick = async () => {
+  if (!N) return;
+  st.textContent = "Writing file …"; await tick();
+  const a = document.createElement("a"); a.href = URL.createObjectURL(writePLY());
+  a.download = fileName.replace(/(_corrected)?\.ply$/i, "") + "_corrected.ply"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  st.textContent = "Saved " + a.download + " to your Downloads folder.";
+};
+
+// ---------- filters (GPU) ----------
+function filterValues() {
+  return { zmin: zLo + (zHi-zLo) * (+$("zmin").value/1000), zmax: zLo + (zHi-zLo) * (+$("zmax").value/1000),
+           cmax: +$("cmax").value/100 };
+}
+function updateFilters() {
+  const f = filterValues();
+  uniforms.uZmin.value = f.zmin; uniforms.uZmax.value = f.zmax;
+  uniforms.uCmax.value = f.cmax >= 0.999 ? 1e9 : f.cmax + 1e-6;
+  $("zminv").textContent = f.zmin.toFixed(2); $("zmaxv").textContent = f.zmax.toFixed(2); $("cmaxv").textContent = f.cmax.toFixed(2);
+  dirty = true;
+}
+["zmin","zmax","cmax"].forEach(id => $(id).addEventListener("input", updateFilters));
+$("ps").addEventListener("input", e => { uniforms.uSize.value = e.target.value * 0.002; $("psv").textContent = (e.target.value/10).toFixed(1); dirty = true; });
+uniforms.uSize.value = 0.02;
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
+  uniforms.uMode.value = +b.dataset.mode; document.querySelectorAll("[data-mode]").forEach(x => x.classList.toggle("on", x === b)); dirty = true; });
+
+// ---------- class panel ----------
+CLASSES.forEach((c, k) => {
+  const row = document.createElement("div"); row.className = "row";
+  const eye = document.createElement("button"); eye.className = "vis"; eye.id = "eye" + k; eye.textContent = "👁"; eye.title = "show / hide";
+  eye.onclick = () => { hidden[k] = hidden[k] ? 0 : 1; syncEyes(); dirty = true; };
+  const b = document.createElement("button"); b.className = "c";
+  b.innerHTML = `<span class="sw" style="background:${COLORS[k]}"></span>${KEYS[k].toUpperCase()} · ${c}<span class="cnt" id="cnt${k}">0</span>`;
+  b.onclick = () => assign(k);
+  row.append(eye, b); $("classes").append(row);
+});
+function syncEyes() { for (let k = 0; k < NCLS; k++) $("eye"+k).style.opacity = hidden[k] ? .3 : 1; }
+function updateCounts() {
+  const cnt = new Float64Array(NCLS);
+  for (let i = 0; i < N; i++) cnt[slotOf(lab[i])]++;
+  for (let k = 0; k < NCLS; k++) $("cnt"+k).textContent = cnt[k].toLocaleString();
+}
+function status(msg) { st.textContent = (msg ? msg + " · " : "") + `${N.toLocaleString()} points · ${nsel.toLocaleString()} selected · ${undoStack.length} edits`; }
+
+// ---------- selection / edits ----------
+function isVisible(i, f) {
+  if (hidden[slotOf(lab[i])]) return false;
+  const z = pos[3*i+2];
+  return z >= f.zmin && z <= f.zmax && (f.cmax >= 0.999 || conf[i] <= f.cmax + 1e-6);
+}
+function assign(k) {
+  if (!N) return;
+  if (!nsel) { status("Nothing selected — press L and draw a loop first"); return; }
+  const v = LABEL_VALUE[k], ids = new Int32Array(nsel), old = new Uint8Array(nsel), oldc = new Float32Array(nsel);
+  let m = 0;
+  for (let i = 0; i < N; i++) if (sel[i]) { ids[m] = i; old[m] = lab[i]; oldc[m] = conf[i]; m++; lab[i] = v; conf[i] = 1; sel[i] = 0; }
+  undoStack.push({ids, old, oldc}); nsel = 0;
+  geom.attributes.aLab.needsUpdate = geom.attributes.aConf.needsUpdate = geom.attributes.aSel.needsUpdate = true;
+  dirty = true; updateCounts(); status(`${m.toLocaleString()} points set to ${CLASSES[k]}`);
+}
+function undo() {
+  const u = undoStack.pop(); if (!u) return;
+  for (let m = 0; m < u.ids.length; m++) { lab[u.ids[m]] = u.old[m]; conf[u.ids[m]] = u.oldc[m]; }
+  geom.attributes.aLab.needsUpdate = geom.attributes.aConf.needsUpdate = true; dirty = true; updateCounts(); status("Undone");
+}
+function clearSel() { if (!N) return; sel.fill(0); nsel = 0; geom.attributes.aSel.needsUpdate = true; dirty = true; status(); }
+$("undo").onclick = undo; $("clearSel").onclick = clearSel;
+
+// ---------- lasso ----------
+let lassoOn = false, drawing = false, poly = [];
+const lc = $("lasso"), lctx = lc.getContext("2d");
+function setLasso(on) { lassoOn = on; controls.enabled = !on; $("lassoBtn").classList.toggle("on", on); canvas.style.cursor = on ? "crosshair" : "default"; }
+$("lassoBtn").onclick = () => setLasso(!lassoOn);
+canvas.addEventListener("pointerdown", e => { if (!lassoOn || e.button !== 0) return; drawing = true; poly = [[e.offsetX, e.offsetY]]; });
+canvas.addEventListener("pointermove", e => {
+  if (!drawing) return; poly.push([e.offsetX, e.offsetY]);
+  lctx.clearRect(0, 0, lc.width, lc.height); lctx.strokeStyle = "#ffeb3b"; lctx.lineWidth = 2; lctx.beginPath();
+  poly.forEach((p, i) => i ? lctx.lineTo(p[0], p[1]) : lctx.moveTo(p[0], p[1])); lctx.closePath(); lctx.stroke();
+});
+canvas.addEventListener("pointerup", async () => {
+  if (!drawing) return; drawing = false; lctx.clearRect(0, 0, lc.width, lc.height);
+  if (poly.length < 3 || !N) return;
+  st.textContent = "Selecting …"; await tick();
+  const t0 = performance.now();
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  camera.updateMatrixWorld();
+  const m = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).elements;
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+  for (const [x, y] of poly) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+  const px = Float64Array.from(poly, p => p[0]), py = Float64Array.from(poly, p => p[1]), np = poly.length;
+  const f = filterValues(); let added = 0;
+  for (let i = 0; i < N; i++) {
+    if (sel[i] || !isVisible(i, f)) continue;
+    const j = 3*i, x = pos[j], y = pos[j+1], z = pos[j+2];
+    const cw = m[3]*x + m[7]*y + m[11]*z + m[15]; if (cw <= 0) continue;
+    const sx = ((m[0]*x + m[4]*y + m[8]*z + m[12]) / cw * 0.5 + 0.5) * w;
+    if (sx < bx0 || sx > bx1) continue;
+    const sy = (1 - ((m[1]*x + m[5]*y + m[9]*z + m[13]) / cw * 0.5 + 0.5)) * h;
+    if (sy < by0 || sy > by1) continue;
+    let inside = false;
+    for (let a = 0, b = np - 1; a < np; b = a++)
+      if ((py[a] > sy) !== (py[b] > sy) && sx < (px[b]-px[a]) * (sy-py[a]) / (py[b]-py[a]) + px[a]) inside = !inside;
+    if (inside) { sel[i] = 1; added++; }
+  }
+  nsel += added; geom.attributes.aSel.needsUpdate = true; dirty = true;
+  status(`${added.toLocaleString()} points added in ${((performance.now()-t0)/1000).toFixed(2)} s — click a class or press its key`);
+});
+
+// ---------- views ----------
+function setView(v) {
+  if (!N) return;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < N; i += 97) { const x = pos[3*i], y = pos[3*i+1]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const r = Math.max(4, Math.hypot(x1-x0, y1-y0) * 0.6);
+  controls.target.copy(center);
+  if (v === "top") camera.position.set(center.x, center.y - 0.01, center.z + r * 1.6);
+  else if (v === "front") camera.position.set(center.x, center.y - r * 1.6, center.z + 1);
+  else if (v === "side") camera.position.set(center.x + r * 1.6, center.y, center.z + 1);
+  else camera.position.set(center.x + r, center.y - r, center.z + r);
+  camera.far = r * 20; camera.updateProjectionMatrix(); controls.update(); dirty = true;
+}
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => setView(b.dataset.view));
+
+// ---------- keys ----------
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { undo(); e.preventDefault(); return; }
+  const key = e.key.toLowerCase();
+  if (key === "l") setLasso(!lassoOn);
+  else if (e.key === "Escape") { clearSel(); setLasso(false); }
+  else { const k = KEYS.indexOf(key); if (k >= 0) assign(k); }
+});
+</script>
+</body>
+</html>

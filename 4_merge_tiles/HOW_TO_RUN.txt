@@ -1,0 +1,21 @@
+STEP 4 - MERGE TILES
+====================
+
+What it does
+  Joins all files corrected in step 3 into one labelled floor. The corrected files are only read,
+  never changed. Labels are copied unchanged.
+
+1. Create a folder called "corrected" in this folder and copy into it every file saved by the
+   Point Label Corrector (names ending in _corrected.ply).
+
+2. Open a command window in this folder and run:
+        python merge_tiles.py
+   If the corrected files are in another folder:
+        python merge_tiles.py --input-folder D:\my_corrected_tiles
+
+Result (folder "merged")
+  floor_merged.ply    all corrected files joined into one floor (input of step 5)
+
+Checks printed at the end
+  points that appear more than once (same position): 0      (otherwise a file was copied twice)
+  labels copied unchanged: yes; corrected files unchanged (MD5 before = after): yes

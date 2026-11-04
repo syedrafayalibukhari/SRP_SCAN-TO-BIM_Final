@@ -1,0 +1,24 @@
+STEP 6 - MODEL CHECK
+====================
+
+What it does
+  Checks model.ifc and writes model_check_report.txt next to it:
+    1  IFC4 schema validation
+    2  the geometry of every element can be built
+    3  every element is in the storey; every opening is cut into a wall and filled
+    4  overlaps between walls, partitions and columns in plan
+    5  distance from the labelled points of each class to the elements of that class
+    6  groups of door and column points that have a modelled element nearby
+
+  Check 5 and 6 compare the model with the labels. They are not a survey of the real building.
+
+Run
+  Open a command window in this folder and run:
+        python check_model.py
+
+Options
+  --model FILE.ifc          model to check (default ../5_modeling/output/model.ifc)
+  --input FILE.ply          labelled floor (default ../4_merge_tiles/merged/floor_merged.ply)
+  --components FILE.json    component description (default: next to the model)
+
+The script ends with an error code if check 1, 2 or 3 fails.

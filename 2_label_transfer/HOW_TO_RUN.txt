@@ -1,0 +1,42 @@
+STEP 2 - LABEL TRANSFER AND TILING
+==================================
+
+What it does
+  Gives every point of preprocessed.ply a starting label and a confidence (0 = unsure, 1 = sure),
+  using the trained model in the "model" folder. No training is needed. Then writes the floor as
+  tiles or as one file, ready for manual correction in step 3.
+
+  Classes: floor, ceiling, wall, door, window (glass walls included), column, partition, other.
+
+1. Choose tiling
+   Open label_transfer.py in a text editor and find near the top:
+        TILE_SIZE_M = 8
+   8 = 8 m x 8 m tiles, 0 = no tiling (one file for the whole floor). Save the file.
+
+2. Open a command window in this folder and run:
+        python label_transfer.py
+   The script uses preprocessed.ply from this folder or from ../1_preprocessing.
+   To use another file:
+        python label_transfer.py --input my_floor.ply
+
+Options
+  --tile-size 0             tile size for this run instead of TILE_SIZE_M (0 = no tiling)
+  --input NAME.ply          point cloud to use
+  --output-folder NAME      folder for the results (default labelled)
+
+Results (folder "labelled")
+  tile_rXX_cYY.ply             one file per tile (row XX, column YY)
+  labelled_floor.ply           the whole floor in one file (tile size 0)
+  tile_map.png                 top view coloured by starting label with the tile grid
+  label_transfer_report.txt    label shares, confidence and point counts per tile
+
+Notes
+  - The starting labels are approximate and must be corrected in step 3.
+  - model/model_info.json lists the accuracy check of the model per class. Doors and columns are
+    the weakest classes, so check them first.
+
+Other scripts
+  train_label_model.py        retrains the model from one or more labelled floors:
+                                  python train_label_model.py floor1.ply floor2.ply
+  convert_legacy_labels.py    converts a floor labelled with the earlier twelve classes:
+                                  python convert_legacy_labels.py old.ply new.ply

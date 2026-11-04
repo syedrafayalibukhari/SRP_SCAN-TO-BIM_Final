@@ -1,0 +1,45 @@
+STEP 5 - MODELLING
+==================
+
+What it does
+  Reconstructs the building elements from the labelled floor and the scanner positions and writes
+  one IFC4 model with floor, ceiling, walls, doors, windows and glass walls, columns and partitions:
+    1  normals for every point
+    2  floor and ceiling levels, wall and glass-wall faces
+    3  room footprints (they bound the floor and the ceilings; rooms are not exported)
+    4  door leaves from door points, windows in walls
+    5  columns and partitions
+    6  clean-up of corners and overlaps, measured heights, parametric component description
+    7  IFC model, built from the component description
+
+Inputs
+  floor_merged.ply       labelled floor from step 4
+  scan_positions.json    scanner positions from step 1
+
+Run
+  Open a command window in this folder and run:
+        python run_modeling.py --project-name "Building A, level 3"
+
+Options
+  --input FILE.ply           labelled point cloud
+  --positions FILE.json      scanner positions
+  --output-folder NAME       folder for the results (default output)
+  --project-name "NAME"      project and building name in the IFC file
+  --start-at STAGE           repeat a run from one stage onwards: structure, rooms, openings,
+                             columns_partitions, components or ifc
+
+Results (folder "output")
+  model.ifc                  the BIM model
+  components.gml / .json     parametric component description
+  elements.csv               list of building elements
+  modelling_log.txt          log of every stage
+  plan_*.png, wall_images.png   plan images of the stages
+  intermediate               stage results, used by --start-at
+
+Notes
+  - An open door stays open in the model. It is placed where it was scanned and has no opening
+    in a wall. A closed door is cut into its wall.
+  - A glazed run that starts above the floor is a window band with a measured sill and head.
+    Nothing is modelled below it, because the scan does not show what is there.
+  - Wall thickness is measured when both faces were scanned. Otherwise it is assumed; the element
+    property "Source" says which.

@@ -1,0 +1,13 @@
+STEP 7 - IFC VIEWER
+===================
+
+What it does
+  ifc_viewer.html shows and edits the IFC model in the browser. It needs no installation. Open it
+  in Google Chrome or Microsoft Edge with an internet connection, which it uses to load its 3D and
+  IFC libraries.
+
+1. Double-click ifc_viewer.html.
+2. Click "Choose IFC file" and open ../5_modeling/output/model.ifc.
+
+The model also opens in any other IFC viewer, for example BIMvision, Solibri Anywhere, Bonsai
+(BlenderBIM) or Autodesk Revit.

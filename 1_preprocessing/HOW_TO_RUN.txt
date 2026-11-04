@@ -1,0 +1,33 @@
+STEP 1 - PREPROCESSING
+======================
+
+What it does
+  Cleans a laser scan (.e57) and reduces it to an evenly spaced point cloud:
+    a) removes invalid records, points at the scanner origin and duplicate points
+    b) removes points far outside the building
+    c) removes isolated noise points (statistical outlier removal)
+    d) voxel downsampling: one averaged point per cube of the chosen size
+  It also saves the position of every scanner set-up, read from the .e57 file.
+
+1. Set the voxel size
+   Open preprocess_pointcloud.py in a text editor and find near the top:
+        VOXEL_SIZE_M = 0.02
+   0.02 = 2 cm cubes (recommended), 0.03 = 3 cm cubes (smaller files). Save the file.
+
+2. Copy the scan file (.e57) into this folder.
+
+3. Open a command window in this folder and run:
+        python preprocess_pointcloud.py
+   If the folder contains more than one .e57 file:
+        python preprocess_pointcloud.py --input my_scan.e57
+
+Options
+  --voxel-size 0.03         voxel size for this run instead of VOXEL_SIZE_M
+  --output-folder NAME      folder for the results (default: this folder)
+  --skip-original           do not write original.ply (it is large)
+
+Results
+  preprocessed.ply             cleaned, evenly spaced point cloud (input of step 2)
+  scan_positions.json          position and orientation of every scanner set-up (input of step 5)
+  original.ply                 full-density point cloud after invalid records are removed
+  preprocessing_report.txt     settings and point counts of every step

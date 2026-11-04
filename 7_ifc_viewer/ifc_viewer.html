@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IFC Viewer &amp; Editor</title>
+<style>
+  :root { --bg:#14161a; --panel:rgba(30,33,40,.95); --text:#e6e6e6; --muted:#9aa0a6; --acc:#4ea1ff; --warn:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.4 system-ui, sans-serif; overflow:hidden; }
+  canvas { display:block; }
+  .panel { position:absolute; background:var(--panel); border-radius:8px; padding:10px 12px; }
+  #ui { top:10px; left:10px; width:290px; max-height:calc(100vh - 20px); overflow:auto; }
+  h1 { font-size:14px; margin:0 0 8px; } h2 { font-size:13px; margin:0 0 6px; } h3 { font-size:12px; margin:10px 0 4px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+  label.t { display:flex; align-items:center; gap:6px; margin:3px 0; cursor:pointer; }
+  .sw { width:11px; height:11px; border-radius:2px; flex:none; }
+  .n { color:var(--muted); margin-left:auto; }
+  #drop { border:1px dashed #5a606b; border-radius:6px; padding:10px; text-align:center; margin-bottom:8px; }
+  #drop.over { border-color:var(--acc); background:rgba(78,161,255,.08); }
+  button, .btn { background:#2b3038; color:var(--text); border:1px solid #444b55; border-radius:5px; padding:5px 9px; cursor:pointer; font:inherit; }
+  button:hover:not(:disabled), .btn:hover { border-color:var(--acc); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.danger { border-color:#7a3a3a; } button.danger:hover:not(:disabled) { border-color:var(--warn); color:#ffd0d0; }
+  button.primary { background:#1f4f86; border-color:#2f6fb8; }
+  .row { display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  #info { color:var(--muted); font-size:12px; margin-top:8px; white-space:pre-line; }
+  #side { right:10px; top:10px; width:310px; max-height:calc(100vh - 20px); overflow:auto; display:none; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  td { border-top:1px solid #333a44; padding:3px 4px; vertical-align:top; word-break:break-word; }
+  td:first-child { color:var(--muted); width:44%; }
+  .f { display:grid; grid-template-columns:1fr 110px; gap:4px 8px; align-items:center; }
+  .f input { width:100%; background:#1d2127; color:var(--text); border:1px solid #444b55; border-radius:4px; padding:3px 6px; font:inherit; }
+  .f input:focus { outline:none; border-color:var(--acc); }
+  .hint { color:var(--muted); font-size:11px; margin-top:4px; }
+  #toast { position:absolute; left:50%; bottom:18px; transform:translateX(-50%); background:#2b3038; border:1px solid #444b55; border-radius:6px; padding:6px 12px; display:none; }
+  @media (max-width:640px) { #ui { width:calc(100vw - 32px); left:16px; max-height:42vh; } #side { width:calc(100vw - 32px); right:16px; top:auto; bottom:10px; max-height:46vh; } }
+</style>
+</head>
+<body>
+<div id="ui" class="panel">
+  <h1>IFC Viewer &amp; Editor</h1>
+  <div id="drop">
+    Drop an <b>.ifc</b> file here<br>or
+    <label class="btn" style="display:inline-block;margin-top:6px">Choose IFC file…<input id="file" type="file" accept=".ifc" hidden></label>
+  </div>
+  <div id="toggles"></div>
+  <div class="row">
+    <button id="fit">Fit view</button><button id="top">Top view</button><button id="all">Show all</button>
+  </div>
+  <div class="row">
+    <button id="undo" disabled>Undo</button>
+    <button id="save" class="primary" disabled>Download edited IFC</button>
+  </div>
+  <div id="info">No model loaded.</div>
+  <div class="hint">Left-drag rotate · right-drag pan · wheel zoom · click to select · <b>Del</b> delete · <b>Ctrl+Z</b> undo · <b>H</b> hide · <b>Esc</b> deselect</div>
+</div>
+
+<div id="side" class="panel">
+  <h2 id="ptitle"></h2>
+  <div class="row" style="margin:0 0 6px">
+    <button id="hide">Hide</button>
+    <button id="del" class="danger">Delete element</button>
+  </div>
+  <h3>Edit</h3>
+  <div id="edit" class="f"></div>
+  <div class="row"><button id="apply" class="primary">Apply changes</button><button id="reset">Reset fields</button></div>
+  <div class="hint" id="ehint"></div>
+  <h3>Properties</h3>
+  <table id="ptable"></table>
+</div>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/web-ifc@0.0.57/web-ifc-api-iife.js"></script>
+<script>
+// =================================================================== scene (web-ifc delivers Y-up)
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x14161a);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 5000);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 0.8));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(40, 80, 30); scene.add(sun);
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", resize); resize();
+(function loop(){ requestAnimationFrame(loop); renderer.render(scene, camera); })();
+
+const STYLE = {   // key: [label, colour, opacity, visible at start]
+  "IfcWall": ["Walls", 0xc9b79c, 1, true],
+  "IfcWall:PARTITIONING": ["Partitions", 0xa48fc4, 1, true],
+  "IfcWallStandardCase": ["Walls (standard case)", 0xc9b79c, 1, true],
+  "IfcCurtainWall": ["Curtain walls / glazing", 0x7fd3ea, 0.45, true],
+  "IfcDoor": ["Doors", 0x2ca02c, 1, true],
+  "IfcWindow": ["Windows", 0xe377c2, 0.8, true],
+  "IfcColumn": ["Columns", 0x777777, 1, true],
+  "IfcBeam": ["Beams", 0x996633, 1, true],
+  "IfcSlab": ["Slabs", 0x7f9fbf, 1, true],
+  "IfcCovering": ["Coverings / ceilings", 0xe9e2f5, 0.5, false],
+  "IfcSpace": ["Spaces", 0xf2c94c, 0.18, false],
+  "IfcFurnishingElement": ["Furniture", 0xb5651d, 1, true],
+  "IfcStair": ["Stairs", 0x8c8c8c, 1, true],
+  "IfcRailing": ["Railings", 0x8c8c8c, 1, true]
+};
+const FALLBACK = ["Other", 0xbbbbbb, 1, true];
+const W = WebIFC;
+let api = null, modelID = null, root = null, groups = {}, materials = {}, selected = null, selId = null;
+let curBuf = null, curName = "model.ifc", history = [], edited = false, hiddenIds = new Set(), visState = {};
+const $ = id => document.getElementById(id);
+const info = $("info");
+const V = x => x && typeof x === "object" && "value" in x ? x.value : x;
+const H = id => new W.Handle(id);
+function toast(msg, ms = 2600) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms); }
+
+async function initApi() {
+  if (api) return api;
+  api = new W.IfcAPI();
+  api.SetWasmPath("https://cdn.jsdelivr.net/npm/web-ifc@0.0.57/", true);
+  await api.Init();
+  return api;
+}
+
+// =================================================================== loading
+function typeName(id) {
+  const name = String(api.GetNameFromTypeCode(api.GetLineType(modelID, id)));
+  const k = Object.keys(STYLE).find(s => s.split(":")[0].toUpperCase() === name.toUpperCase());
+  let key = k ? k.split(":")[0] : "Ifc" + name.slice(3).toLowerCase().replace(/^./, c => c.toUpperCase());
+  if (key === "IfcWall") { try { if (V(api.GetLine(modelID, id).PredefinedType) === "PARTITIONING") key = "IfcWall:PARTITIONING"; } catch (e) {} }
+  return key;
+}
+function material(key) {
+  if (!materials[key]) {
+    const s = STYLE[key] || FALLBACK;
+    materials[key] = new THREE.MeshLambertMaterial({color:s[1], side:THREE.DoubleSide, transparent:s[2] < 1, opacity:s[2], depthWrite:s[2] === 1});
+  }
+  return materials[key];
+}
+function addMesh(flat) {
+  const id = flat.expressID, key = typeName(id), list = flat.geometries;
+  for (let i = 0; i < list.size(); i++) {
+    const pg = list.get(i);
+    const g = api.GetGeometry(modelID, pg.geometryExpressID);
+    const v = api.GetVertexArray(g.GetVertexData(), g.GetVertexDataSize());
+    const ix = api.GetIndexArray(g.GetIndexData(), g.GetIndexDataSize());
+    const pos = new Float32Array(v.length / 2), nrm = new Float32Array(v.length / 2);
+    for (let k = 0, j = 0; k < v.length; k += 6, j += 3) {
+      pos[j] = v[k]; pos[j + 1] = v[k + 1]; pos[j + 2] = v[k + 2];
+      nrm[j] = v[k + 3]; nrm[j + 1] = v[k + 4]; nrm[j + 2] = v[k + 5];
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
+    geo.setIndex(new THREE.BufferAttribute(ix, 1));
+    const m = new THREE.Mesh(geo, material(key));
+    m.matrixAutoUpdate = false; m.matrix.fromArray(pg.flatTransformation);
+    m.userData = {id, key};
+    if ((STYLE[key] || FALLBACK)[2] === 1)
+      m.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({color:0x2a2a2a, transparent:true, opacity:0.45})));
+    (groups[key] = groups[key] || []).push(m);
+    root.add(m);
+    g.delete && g.delete();
+  }
+}
+function applyVisibility() {
+  Object.entries(groups).forEach(([k, ms]) => {
+    const on = k in visState ? visState[k] : (STYLE[k] || FALLBACK)[3];
+    ms.forEach(m => m.visible = on && !hiddenIds.has(m.userData.id));
+  });
+}
+function buildToggles() {
+  const tg = $("toggles"); tg.innerHTML = "";
+  const order = k => STYLE[k] ? Object.keys(STYLE).indexOf(k) : 99;
+  Object.keys(groups).sort((a, b) => order(a) - order(b)).forEach(k => {
+    const s = STYLE[k] || [k, FALLBACK[1]];
+    const on = k in visState ? visState[k] : (STYLE[k] || FALLBACK)[3];
+    const l = document.createElement("label"); l.className = "t";
+    l.innerHTML = `<input type="checkbox" ${on ? "checked" : ""}><span class="sw" style="background:#${s[1].toString(16).padStart(6, "0")}"></span>${s[0]}<span class="n">${new Set(groups[k].map(m => m.userData.id)).size}</span>`;
+    l.querySelector("input").onchange = e => { visState[k] = e.target.checked; applyVisibility(); };
+    tg.appendChild(l);
+  });
+}
+function fit(top) {
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()), r = Math.max(s.x, s.z);
+  controls.target.copy(c);
+  if (top) camera.position.set(c.x, c.y + r * 1.3, c.z + 0.001);
+  else camera.position.set(c.x + r * 0.45, c.y + r * 0.75, c.z + r * 0.95);
+  controls.update();
+}
+async function openBuffer(buf, keepView) {
+  await initApi();
+  if (modelID !== null) { api.CloseModel(modelID); scene.remove(root); }
+  groups = {}; root = new THREE.Group(); scene.add(root);
+  const t0 = performance.now();
+  modelID = api.OpenModel(new Uint8Array(buf));
+  api.StreamAllMeshes(modelID, addMesh);
+  if (W.IFCSPACE) api.StreamAllMeshesWithTypes(modelID, [W.IFCSPACE], addMesh);
+  root.updateMatrixWorld(true);
+  buildToggles(); applyVisibility();
+  if (!keepView) fit(false);
+  const n = Object.values(groups).reduce((a, g) => a + new Set(g.map(m => m.userData.id)).size, 0);
+  info.textContent = `${curName}${edited ? " (edited)" : ""}\n${n} elements with geometry · ${api.GetModelSchema(modelID)} · ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  $("undo").disabled = !history.length; $("save").disabled = !edited;
+}
+async function loadFile(buf, name) {
+  info.textContent = `Loading ${name} …`;
+  try {
+    curBuf = new Uint8Array(buf); curName = name; history = []; edited = false; hiddenIds = new Set(); visState = {};
+    select(null); await openBuffer(curBuf, false);
+  } catch (e) { console.error(e); info.textContent = `Could not read ${name}: ${e.message || e}`; }
+}
+// commit the edits made on the open model: save, remember the previous version, reload geometry
+async function commit(msg, reselect) {
+  const out = api.SaveModel(modelID);
+  history.push(curBuf); curBuf = out; edited = true;
+  await openBuffer(curBuf, true);
+  select(reselect !== undefined && reselect !== null && Object.values(groups).flat().some(m => m.userData.id === reselect) ? reselect : null);
+  toast(msg);
+}
+async function undo() {
+  if (!history.length) return;
+  curBuf = history.pop(); edited = history.length > 0;
+  const keep = selId; await openBuffer(curBuf, true);
+  select(Object.values(groups).flat().some(m => m.userData.id === keep) ? keep : null);
+  toast("Undone");
+}
+
+// =================================================================== IFC line helpers
+function clone(line) {                    // copy of a line that WriteLine will store under a new express ID
+  const c = Object.assign(Object.create(Object.getPrototypeOf(line)), line);
+  for (const k in c) if (Array.isArray(c[k])) c[k] = c[k].slice();
+  c.expressID = -1; return c;
+}
+function num(old, x) {                    // same measure wrapper type, new value
+  const w = Object.assign(Object.create(Object.getPrototypeOf(old)), old); w.value = x; return w;
+}
+function ids(type) { const v = api.GetLineIDsWithType(modelID, type); const a = []; for (let i = 0; i < v.size(); i++) a.push(v.get(i)); return a; }
+function bodyChain(id) {
+  const el = api.GetLine(modelID, id);
+  if (!el.Representation) return null;
+  const pds = api.GetLine(modelID, el.Representation.value);
+  for (let r = 0; r < (pds.Representations || []).length; r++) {
+    const sr = api.GetLine(modelID, pds.Representations[r].value);
+    const ident = V(sr.RepresentationIdentifier);
+    if (ident && ident !== "Body") continue;
+    for (let k = 0; k < sr.Items.length; k++) {
+      const it = api.GetLine(modelID, sr.Items[k].value);
+      if (it.type === W.IFCEXTRUDEDAREASOLID) return {el, pds, r, sr, k, solid:it, prof:api.GetLine(modelID, it.SweptArea.value)};
+    }
+  }
+  return null;
+}
+function writeBody(ch, v) {               // copy-on-write profile -> solid -> representation -> shape, then repoint the element
+  let prof = ch.prof;
+  const pk = prof.type === W.IFCRECTANGLEPROFILEDEF ? ["XDim", "YDim"] : prof.type === W.IFCCIRCLEPROFILEDEF ? ["Radius"] : [];
+  if ((v.xdim != null && pk.includes("XDim")) || (v.ydim != null && pk.includes("YDim")) || (v.radius != null && pk.includes("Radius"))) {
+    prof = clone(prof);
+    if (v.xdim != null) prof.XDim = num(prof.XDim, v.xdim);
+    if (v.ydim != null) prof.YDim = num(prof.YDim, v.ydim);
+    if (v.radius != null) prof.Radius = num(prof.Radius, v.radius);
+    api.WriteLine(modelID, prof);
+  }
+  const solid = clone(ch.solid); solid.SweptArea = H(prof.expressID);
+  if (v.depth != null) solid.Depth = num(solid.Depth, v.depth);
+  api.WriteLine(modelID, solid);
+  const sr = clone(ch.sr); sr.Items = ch.sr.Items.map((h, i) => i === ch.k ? H(solid.expressID) : h); api.WriteLine(modelID, sr);
+  const pds = clone(ch.pds); pds.Representations = ch.pds.Representations.map((h, i) => i === ch.r ? H(sr.expressID) : h); api.WriteLine(modelID, pds);
+  const el = api.GetLine(modelID, ch.el.expressID); el.Representation = H(pds.expressID); api.WriteLine(modelID, el);
+}
+function placementChain(id) {
+  const el = api.GetLine(modelID, id);
+  if (!el.ObjectPlacement) return null;
+  const lp = api.GetLine(modelID, el.ObjectPlacement.value);
+  if (lp.type !== W.IFCLOCALPLACEMENT || !lp.RelativePlacement) return null;
+  const ax = api.GetLine(modelID, lp.RelativePlacement.value);
+  if (ax.type !== W.IFCAXIS2PLACEMENT3D) return null;
+  return {lp, ax, pt:api.GetLine(modelID, ax.Location.value), rd:ax.RefDirection ? api.GetLine(modelID, ax.RefDirection.value) : null,
+          axis:ax.Axis ? api.GetLine(modelID, ax.Axis.value) : null};
+}
+function writePlacement(pc, xyz, rotDeg) {  // new point / direction / axis placement; the element keeps its IfcLocalPlacement (children follow)
+  const pt = clone(pc.pt); pt.Coordinates = pc.pt.Coordinates.map((c, i) => num(c, xyz[i] != null ? xyz[i] : V(c)));
+  api.WriteLine(modelID, pt);
+  const ax = clone(pc.ax); ax.Location = H(pt.expressID);
+  if (rotDeg != null && pc.rd) {
+    const rd = clone(pc.rd), a = rotDeg * Math.PI / 180;
+    rd.DirectionRatios = pc.rd.DirectionRatios.map((c, i) => num(c, i === 0 ? Math.cos(a) : i === 1 ? Math.sin(a) : 0));
+    api.WriteLine(modelID, rd); ax.RefDirection = H(rd.expressID);
+  }
+  api.WriteLine(modelID, ax);
+  const lp = api.GetLine(modelID, pc.lp.expressID); lp.RelativePlacement = H(ax.expressID); api.WriteLine(modelID, lp);
+}
+function fillsOf(id) {                    // opening(s) filled by a door/window
+  return ids(W.IFCRELFILLSELEMENT).map(r => api.GetLine(modelID, r)).filter(r => V(r.RelatedBuildingElement) === id).map(r => V(r.RelatingOpeningElement));
+}
+async function syncPset(id, vals) {        // keep ScanToBIM_* numbers consistent with the edited geometry
+  const map = {Length_m:vals.xdim, Thickness_m:vals.ydim, Height_m:vals.depth, Width_m:vals.width};
+  try {
+    const psets = await api.properties.getPropertySets(modelID, id, false);
+    for (const ps of psets) for (const h of (ps.HasProperties || [])) {
+      const p = api.GetLine(modelID, V(h));
+      const x = map[V(p.Name)];
+      if (x != null && p.NominalValue) { p.NominalValue = num(p.NominalValue, x); api.WriteLine(modelID, p); }
+    }
+  } catch (e) { console.warn(e); }
+}
+
+// =================================================================== delete
+function deleteSet(id) {
+  const set = new Set([id]); const t = api.GetLineType(modelID, id);
+  const voids = ids(W.IFCRELVOIDSELEMENT).map(r => api.GetLine(modelID, r));
+  const fills = ids(W.IFCRELFILLSELEMENT).map(r => api.GetLine(modelID, r));
+  voids.filter(r => V(r.RelatingBuildingElement) === id).forEach(r => set.add(V(r.RelatedOpeningElement)));
+  fills.filter(r => set.has(V(r.RelatingOpeningElement))).forEach(r => set.add(V(r.RelatedBuildingElement)));
+  if (t === W.IFCDOOR || t === W.IFCWINDOW) fills.filter(r => V(r.RelatedBuildingElement) === id).forEach(r => set.add(V(r.RelatingOpeningElement)));
+  return set;
+}
+function deleteElements(set) {
+  const LIST = [[W.IFCRELCONTAINEDINSPATIALSTRUCTURE, "RelatedElements", "RelatingStructure"], [W.IFCRELDEFINESBYPROPERTIES, "RelatedObjects", null],
+                [W.IFCRELDEFINESBYTYPE, "RelatedObjects", null], [W.IFCRELASSOCIATESMATERIAL, "RelatedObjects", null],
+                [W.IFCRELAGGREGATES, "RelatedObjects", "RelatingObject"]];
+  const SINGLE = [[W.IFCRELVOIDSELEMENT, ["RelatingBuildingElement", "RelatedOpeningElement"]], [W.IFCRELFILLSELEMENT, ["RelatingOpeningElement", "RelatedBuildingElement"]],
+                  [W.IFCRELSPACEBOUNDARY, ["RelatedBuildingElement", "RelatingSpace"]], [W.IFCRELCONNECTSPATHELEMENTS, ["RelatingElement", "RelatedElement"]],
+                  [W.IFCRELCONNECTSELEMENTS, ["RelatingElement", "RelatedElement"]]];
+  for (const [type, listKey, ownerKey] of LIST) {
+    if (type === undefined) continue;
+    for (const rid of ids(type)) {
+      const r = api.GetLine(modelID, rid);
+      if (ownerKey && set.has(V(r[ownerKey]))) { api.DeleteLine(modelID, rid); continue; }
+      const lst = r[listKey] || [];
+      const keep = lst.filter(h => !set.has(V(h)));
+      if (keep.length === lst.length) continue;
+      if (!keep.length) { api.DeleteLine(modelID, rid); continue; }
+      r[listKey] = keep; api.WriteLine(modelID, r);
+    }
+  }
+  for (const [type, keys] of SINGLE) {
+    if (type === undefined) continue;
+    for (const rid of ids(type)) { const r = api.GetLine(modelID, rid); if (keys.some(k => set.has(V(r[k])))) api.DeleteLine(modelID, rid); }
+  }
+  set.forEach(id => api.DeleteLine(modelID, id));
+}
+async function doDelete() {
+  if (selId === null) return;
+  const set = deleteSet(selId);
+  const names = [...set].filter(i => i !== selId).map(i => { try { return `${String(api.GetNameFromTypeCode(api.GetLineType(modelID, i)))} ${V(api.GetLine(modelID, i).Name) || "#" + i}`; } catch (e) { return "#" + i; } });
+  const nm = V(api.GetLine(modelID, selId).Name) || "#" + selId;
+  if (!confirm(`Delete ${nm}?` + (names.length ? `\n\nThis also removes:\n- ${names.join("\n- ")}` : ""))) return;
+  deleteElements(set);
+  await commit(`Deleted ${nm}${names.length ? ` (+${names.length} dependent)` : ""}`);
+}
+
+// =================================================================== selection, properties, edit form
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let down = null;
+renderer.domElement.addEventListener("pointerdown", e => down = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || !root) return;
+  mouse.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(Object.values(groups).flat().filter(m => m.visible), false)[0];
+  select(hit ? hit.object.userData.id : null);
+});
+const HL = new THREE.MeshLambertMaterial({color:0xffd400, side:THREE.DoubleSide});
+let form = {};
+async function select(id) {
+  if (selected) selected.forEach(m => m.material = material(m.userData.key));
+  selected = null; selId = id;
+  if (id === null || modelID === null) { $("side").style.display = "none"; return; }
+  selected = Object.values(groups).flat().filter(m => m.userData.id === id);
+  selected.forEach(m => m.material = HL);
+  const line = api.GetLine(modelID, id);
+  $("ptitle").textContent = `${V(line.Name) || "#" + id}`;
+  // properties
+  const rows = [["Type", (selected[0] ? selected[0].userData.key : String(api.GetNameFromTypeCode(api.GetLineType(modelID, id)))).replace(":", " ")],
+                ["Description", V(line.Description)], ["GlobalId", V(line.GlobalId)], ["PredefinedType", V(line.PredefinedType)], ["Express ID", id]];
+  try {
+    const psets = await api.properties.getPropertySets(modelID, id, true);
+    for (const ps of psets) for (const p of (ps.HasProperties || [])) {
+      const v = V(p.NominalValue); rows.push([`${V(ps.Name)}.${V(p.Name)}`, typeof v === "number" ? +v.toFixed(4) : v]);
+    }
+  } catch (e) {}
+  $("ptable").innerHTML = rows.filter(r => r[1] !== undefined && r[1] !== null && r[1] !== "").map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("");
+  buildForm(id, line);
+  $("side").style.display = "block";
+}
+function buildForm(id, line) {
+  const ch = bodyChain(id), pc = placementChain(id), t = api.GetLineType(modelID, id);
+  const isFill = t === W.IFCDOOR || t === W.IFCWINDOW;
+  const f = [];   // [key, label, value, step]
+  f.push(["name", "Name", V(line.Name) || "", null]);
+  if (isFill) {
+    f.push(["width", "Width (m)", V(line.OverallWidth) ?? (ch && ch.prof.XDim ? V(ch.prof.XDim) : ""), 0.01]);
+    f.push(["height", "Height (m)", V(line.OverallHeight) ?? (ch ? V(ch.solid.Depth) : ""), 0.01]);
+  } else if (ch) {
+    if (ch.prof.type === W.IFCRECTANGLEPROFILEDEF) { f.push(["xdim", "Length (m)", V(ch.prof.XDim), 0.01]); f.push(["ydim", "Thickness (m)", V(ch.prof.YDim), 0.005]); }
+    if (ch.prof.type === W.IFCCIRCLEPROFILEDEF) f.push(["radius", "Radius (m)", V(ch.prof.Radius), 0.005]);
+    f.push(["depth", "Height / extrusion (m)", V(ch.solid.Depth), 0.01]);
+  }
+  if (pc) {
+    const c = pc.pt.Coordinates.map(V);
+    f.push(["x", "Position X (m)", c[0], 0.01]); f.push(["y", "Position Y (m)", c[1], 0.01]); f.push(["z", "Position Z (m)", c[2] ?? 0, 0.01]);
+    const flat = !pc.axis || Math.abs(V(pc.axis.DirectionRatios[2]) - 1) < 1e-6;
+    if (pc.rd && flat) f.push(["rot", "Rotation (deg)", Math.atan2(V(pc.rd.DirectionRatios[1]), V(pc.rd.DirectionRatios[0])) * 180 / Math.PI, 0.5]);
+  }
+  form = {id, fields:f};
+  $("edit").innerHTML = f.map(([k, l, v, s]) => `<label for="f_${k}">${l}</label><input id="f_${k}" ${s ? `type="number" step="${s}"` : 'type="text"'} value="${s && typeof v === "number" ? +v.toFixed(4) : v}">`).join("");
+  $("ehint").textContent = ch || pc ? "Position is relative to the parent placement (storey or host wall). Length/height edits keep the element centred on its axis."
+                                   : "This element has no simple extrusion or placement that can be edited here.";
+}
+async function applyEdit() {
+  const id = form.id; if (id === null || id === undefined) return;
+  const get = k => { const el = $("f_" + k); if (!el) return null; return el.type === "number" ? (el.value === "" ? null : +el.value) : el.value; };
+  const orig = Object.fromEntries(form.fields.map(([k, , v]) => [k, v]));
+  // fields show 4 decimals, so compare against the displayed (rounded) value
+  const changed = k => { const v = get(k); return v !== null && (typeof v === "number" ? Math.abs(v - +(+orig[k]).toFixed(4)) > 1e-9 : v !== orig[k]); };
+  for (const k of ["xdim", "ydim", "radius", "depth", "width", "height"]) if (changed(k) && !(get(k) > 0)) { toast(`${k} must be > 0`); return; }
+  const t = api.GetLineType(modelID, id); const parts = [];
+  if (changed("name")) { const l = api.GetLine(modelID, id); l.Name = l.Name ? num(l.Name, get("name")) : {type:1, value:get("name")}; api.WriteLine(modelID, l); parts.push("name"); }
+  if (t === W.IFCDOOR || t === W.IFCWINDOW) {
+    if (changed("width") || changed("height")) {
+      const w = changed("width") ? get("width") : null, h = changed("height") ? get("height") : null;
+      const l = api.GetLine(modelID, id);
+      if (w != null && l.OverallWidth) l.OverallWidth = num(l.OverallWidth, w);
+      if (h != null && l.OverallHeight) l.OverallHeight = num(l.OverallHeight, h);
+      api.WriteLine(modelID, l);
+      const ch = bodyChain(id); if (ch) writeBody(ch, {xdim:w, depth:h});
+      for (const op of fillsOf(id)) { const oc = bodyChain(op); if (oc) writeBody(oc, {xdim:w, depth:h}); }
+      await syncPset(id, {width:w, depth:h}); parts.push("size");
+    }
+  } else {
+    const v = {xdim:changed("xdim") ? get("xdim") : null, ydim:changed("ydim") ? get("ydim") : null,
+               radius:changed("radius") ? get("radius") : null, depth:changed("depth") ? get("depth") : null};
+    if (Object.values(v).some(x => x != null)) { const ch = bodyChain(id); if (ch) { writeBody(ch, v); await syncPset(id, v); parts.push("dimensions"); } }
+  }
+  if (["x", "y", "z", "rot"].some(changed)) {
+    const pc = placementChain(id);
+    if (pc) { writePlacement(pc, [get("x"), get("y"), get("z")], changed("rot") ? get("rot") : null); parts.push("position"); }
+  }
+  if (!parts.length) { toast("Nothing changed"); return; }
+  await commit(`Updated ${parts.join(", ")}`, id);
+}
+
+// =================================================================== wiring
+$("file").onchange = e => { const f = e.target.files[0]; if (f) f.arrayBuffer().then(b => loadFile(b, f.name)); e.target.value = ""; };
+const drop = $("drop");
+["dragenter", "dragover"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) f.arrayBuffer().then(b => loadFile(b, f.name)); });
+const src = new URLSearchParams(location.search).get("src");
+if (src) fetch(src).then(r => r.arrayBuffer()).then(b => loadFile(b, src.split("/").pop())).catch(() => info.textContent = "Could not fetch " + src);
+$("fit").onclick = () => fit(false);
+$("top").onclick = () => fit(true);
+$("all").onclick = () => { hiddenIds.clear(); Object.keys(groups).forEach(k => visState[k] = true); buildToggles(); applyVisibility(); };
+$("hide").onclick = () => { if (selId === null) return; hiddenIds.add(selId); select(null); applyVisibility(); };
+$("del").onclick = doDelete;
+$("apply").onclick = applyEdit;
+$("reset").onclick = () => selId !== null && buildForm(selId, api.GetLine(modelID, selId));
+$("undo").onclick = undo;
+$("save").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([curBuf], {type:"application/octet-stream"}));
+  a.download = curName.replace(/\.ifc$/i, "") + "_edited.ifc"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") { if (e.key === "Enter" && e.target.closest("#edit")) applyEdit(); return; }
+  if (e.key === "Delete") doDelete();
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+  else if (e.key.toLowerCase() === "h") $("hide").click();
+  else if (e.key === "Escape") select(null);
+});
+</script>
+</body>
+</html>

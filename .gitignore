@@ -1,0 +1,15 @@
+# Scan data and results are large and stay outside the repository
+*.e57
+*.ply
+*.las
+*.laz
+*.ifc
+1_preprocessing/preprocessing_report.txt
+1_preprocessing/scan_positions.json
+2_label_transfer/labelled/
+4_merge_tiles/corrected/
+4_merge_tiles/merged/
+5_modeling/output/
+__pycache__/
+*.pyc
+.pytest_cache/
