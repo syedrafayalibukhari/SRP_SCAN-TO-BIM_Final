@@ -161,6 +161,13 @@ def test_two_lines_are_one_door_with_the_width_of_the_leaf():
     assert door["c"] == pytest.approx([0.45, 0.0])
 
 
+def test_window_points_follow_the_nearest_run():
+    split = load_script("2_label_transfer/split_glass_labels.py").split
+    runs = [dict(start=[0, 0], end=[5, 0], baseOffset=0.0), dict(start=[0, 3], end=[5, 3], baseOffset=1.0)]
+    xy = np.array([[2.0, 0.1], [2.0, 2.9], [9.0, 0.0]])
+    assert split(xy, runs).tolist() == [True, False, False]
+
+
 def element(kind, d, o, t0, t1, thickness=0.2):
     d = np.array(d, float)
     return dict(kind=kind, src=(kind, o), d=d, n=np.array([-d[1], d[0]]), o=o, T=thickness, t0=t0, t1=t1)

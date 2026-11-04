@@ -3,8 +3,9 @@
 Levels (Oesau 2014, Cui 2019): z-histogram of horizontal-normal floor and ceiling points, 1 cm bins, peaks.
 Directions (Cui 2019, Wei 2023): histogram of horizontal normals modulo 90 degrees.
 Faces: for each direction, 1 cm histogram of the offset along the normal, peaks, inlier band +-3 cm,
-       runs along the axis split at gaps. Faces are found separately on wall, curtain wall and window
-       points; the label decides what a glazed run becomes.
+       runs along the axis split at gaps. Faces are found separately on wall points and on all glazed
+       points together, so the glazed geometry does not depend on the window or curtain wall label.
+       The label held by most points of a glazed run decides what the run becomes.
 Slabs: a face with normal -n at p and a face with normal +n at q (q - p in 0.04-0.45 m, overlapping) form
        one wall with measured thickness; a glazed pair may be only a few cm apart. Unpaired faces are
        single-sided walls whose thickness is decided in the rooms stage.
@@ -24,7 +25,7 @@ RAY_PIXEL = 0.02
 WALL_THICKNESS_RANGE = (0.04, 0.45)
 GLASS_THICKNESS_RANGE = (-0.03, 0.15)
 GLASS_MIN_THICKNESS = 0.06
-GLAZED = ("glass_wall", "window_run")
+GLAZED = ("glazing", "glass_wall", "window_run")
 
 
 def histogram_peaks(values: np.ndarray, step: float = 0.01, min_share: float = 0.05) -> List[Tuple[float, float]]:
@@ -80,7 +81,8 @@ class LineOfSight:
         return count
 
 
-def detect_faces(points: np.ndarray, normals: np.ndarray, masks: Dict[str, np.ndarray], families: List[float], sight: LineOfSight) -> List[dict]:
+def detect_faces(points: np.ndarray, normals: np.ndarray, labels: np.ndarray, masks: Dict[str, np.ndarray], families: List[float],
+                 sight: LineOfSight) -> List[dict]:
     """Faces are found on unsigned offsets; each face's viewing side is decided by line of sight."""
     faces = []
     for kind, mask in masks.items():
@@ -118,7 +120,8 @@ def detect_faces(points: np.ndarray, normals: np.ndarray, masks: Dict[str, np.nd
                             faces.append(dict(fam=family, n=nn.tolist(), d=[-nn[1], nn[0]], o=float(sign * offset),
                                               t0=t0 if sign > 0 else -t1, t1=t1 if sign > 0 else -t0,
                                               z0=float(np.percentile(z, 1)), z1=float(np.percentile(z, 99)), npts=int(len(run)),
-                                              pca=principal.tolist(), kind=kind, seen=dict(plus=visible[1], minus=visible[-1])))
+                                              pca=principal.tolist(), kind=kind, curtain=float((labels[members] == CURTAIN_WALL).mean()),
+                                              seen=dict(plus=visible[1], minus=visible[-1])))
     return faces
 
 
@@ -184,6 +187,15 @@ def pair_slabs(faces: List[dict]) -> List[dict]:
     return [s for s in slabs if not (not s["paired"] and on_paired_face(s)) and not (s["kind"] in GLAZED and s["t1"] - s["t0"] < 1.0)]
 
 
+def classify_glazing(slabs: List[dict], faces: List[dict]) -> None:
+    """A glazed slab is a curtain wall when most of its points are labelled curtain wall."""
+    for slab in slabs:
+        if slab["kind"] == "glazing":
+            members = [faces[i] for i in slab["faces"]]
+            share = sum(f["curtain"] * f["npts"] for f in members) / sum(f["npts"] for f in members)
+            slab["kind"] = "glass_wall" if share >= 0.5 else "window_run"
+
+
 def plot(ctx: ModelContext, points: np.ndarray, floor_z: float, slabs: List[dict]) -> None:
     import matplotlib.pyplot as plt
 
@@ -214,12 +226,12 @@ def run(ctx: ModelContext) -> None:
     ctx.log(f"floor level {floor_z:.3f} m; ceiling levels {[round(z, 3) for z in ceilings]} m")
 
     vertical = np.abs(normals[:, 2]) < 0.2
-    masks = {"wall": (labels == WALL) & vertical, "glass_wall": (labels == CURTAIN_WALL) & vertical, "window_run": (labels == WINDOW) & vertical}
+    masks = {"wall": (labels == WALL) & vertical, "glazing": np.isin(labels, [WINDOW, CURTAIN_WALL]) & vertical}
     families = dominant_directions(normals[np.isin(labels, [WALL, WINDOW, CURTAIN_WALL, PARTITION]) & vertical])
     ctx.log(f"dominant directions (mod 90): {[round(f, 2) for f in families]} deg")
 
     sight = LineOfSight(points, labels, floor_z, ctx.stations[:, :2])
-    faces = detect_faces(points, normals, masks, families, sight)
+    faces = detect_faces(points, normals, labels, masks, families, sight)
     for _ in range(2):      # refine each direction from its face inliers (PCA angle, length-weighted)
         refined = []
         for family in families:
@@ -227,11 +239,12 @@ def run(ctx: ModelContext) -> None:
             offsets = [((np.degrees(np.arctan2(f["pca"][1], f["pca"][0])) - family + 45) % 90 - 45) for f in members]
             refined.append(float((family + np.average(offsets, weights=[f["t1"] - f["t0"] for f in members])) % 90))
         families = refined
-        faces = detect_faces(points, normals, masks, families, sight)
+        faces = detect_faces(points, normals, labels, masks, families, sight)
     ctx.log(f"refined directions (mod 90): {[round(f, 3) for f in families]} deg")
     ctx.log(f"faces: {len(faces)} (band +-{BAND} m, split at gaps > {GAP_SPLIT} m, length >= {MIN_LEN} m)")
     orient_unseen_faces(faces)
     slabs = pair_slabs(faces)
+    classify_glazing(slabs, faces)
     widths = [s["o1"] - s["o0"] for s in slabs if s["paired"] and s["kind"] == "wall"] or [0.0]
     ctx.log(f"slabs: {sum(s['paired'] for s in slabs)} paired (wall thickness median {np.median(widths):.3f} m, "
             f"range {min(widths):.3f}-{max(widths):.3f}), {sum(not s['paired'] for s in slabs)} single-face")

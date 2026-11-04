@@ -1,5 +1,5 @@
 {
-  "trained_on": "floor_final_elements.ply",
+  "trained_on": "floor_final_corrected_glass_split.ply",
   "created": "2026-11-03",
   "classes": [
     "floor",
@@ -9,7 +9,8 @@
     "window",
     "column",
     "partition",
-    "other"
+    "other",
+    "curtain_wall"
   ],
   "feature_voxel_m": 0.05,
   "neighbours": [
@@ -17,21 +18,22 @@
     30,
     60
   ],
-  "training_cubes": 270571,
+  "training_cubes": 309141,
   "trees": 400,
   "lightgbm": "4.6.0",
   "check": {
     "method": "floor split into 4 strips along x; each strip left out once",
-    "mean_miou": 0.489,
+    "mean_miou": 0.456,
     "per_class_iou": {
-      "floor": 0.961,
-      "ceiling": 0.968,
-      "wall": 0.46,
-      "door": 0.043,
-      "window": 0.313,
-      "column": 0.058,
-      "partition": 0.348,
-      "other": 0.513
+      "floor": 0.968,
+      "ceiling": 0.973,
+      "wall": 0.487,
+      "door": 0.041,
+      "window": 0.287,
+      "column": 0.056,
+      "partition": 0.365,
+      "other": 0.531,
+      "curtain_wall": 0.158
     }
   }
 }

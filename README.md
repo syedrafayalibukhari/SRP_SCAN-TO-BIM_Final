@@ -78,7 +78,7 @@ Each script accepts `--help`.
 
 `0` floor, `1` ceiling, `2` wall, `3` door, `4` window, `5` column, `6` partition, `7` other, `8` curtain wall, `255` unknown.
 
-Furniture, equipment and clutter are labelled `other` and are not modelled. A floor labelled with the earlier twelve classes is converted with `2_label_transfer/convert_legacy_labels.py`.
+Furniture, equipment and clutter are labelled `other` and are not modelled. A floor labelled with the earlier twelve classes is converted with `2_label_transfer/convert_legacy_labels.py`. `2_label_transfer/split_glass_labels.py` splits window points into windows and curtain walls by height, without manual labelling.
 
 ## Tests
 

@@ -25,6 +25,7 @@ What it does
 
 Notes
   - Label furniture, equipment and clutter as other.
-  - Window points become IfcWindow and curtain wall points become IfcCurtainWall.
+  - Window points become IfcWindow and curtain wall points become IfcCurtainWall. The label held by
+    most points of a glazed run decides the class of the whole run.
   - Use the Confidence colouring to find uncertain points first.
   - Label points that cannot be identified as unknown rather than guessing.

@@ -7,8 +7,6 @@ What it does
   tiles or as one file, ready for manual correction in step 3.
 
   Classes: floor, ceiling, wall, door, window, column, partition, other, curtain wall.
-  The curtain wall class is only predicted after the model is retrained on floors labelled with it.
-  Until then, glass walls start as window; change them to curtain wall in step 3.
 
 1. Choose tiling
    Open label_transfer.py in a text editor and find near the top:
@@ -42,3 +40,8 @@ Other scripts
                                   python train_label_model.py floor1.ply floor2.ply
   convert_legacy_labels.py    converts a floor labelled with the earlier twelve classes:
                                   python convert_legacy_labels.py old.ply new.ply
+  split_glass_labels.py       splits window points into windows and curtain walls without manual
+                              labelling. Run step 5 on the floor first, then:
+                                  python split_glass_labels.py floor.ply components.json new.ply
+                              A glazed run that reaches the floor becomes curtain wall; a run with
+                              a sill stays window.

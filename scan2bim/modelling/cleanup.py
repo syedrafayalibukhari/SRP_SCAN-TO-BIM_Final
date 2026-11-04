@@ -168,8 +168,8 @@ def resolve_overlaps(elements: List[dict], log, tag: str) -> List[dict]:
 
 def measure_heights(ctx: ModelContext, elements: List[dict], floor_z: float) -> None:
     points, labels = ctx.points, ctx.labels
-    own = {"wall": points[labels == WALL], "column": points[labels == COLUMN], "glass_wall": points[labels == CURTAIN_WALL],
-           "window_run": points[labels == WINDOW]}
+    glazed = points[np.isin(labels, [WINDOW, CURTAIN_WALL])]
+    own = {"wall": points[labels == WALL], "column": points[labels == COLUMN], "glass_wall": glazed, "window_run": glazed}
     bands = 0
     for x in elements:
         x["base"] = 0.0
