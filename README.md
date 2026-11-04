@@ -16,7 +16,7 @@ The model contains eight element types and the rooms:
 | Partition (cubicle panel) | `IfcWall` (PARTITIONING) |
 | Room | `IfcSpace` |
 
-The label decides between a window and a curtain wall. A door is cut into its wall or glass panel, or fills the gap between two elements.
+The label decides between a window and a curtain wall. Modelling rules keep the model regular: partitions follow the local grid, curtain walls are continuous and other walls stop at them, and a wall is continued across a doorway so that the door is hosted.
 
 ## Workflow
 

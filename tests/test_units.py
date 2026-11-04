@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scan2bim.classes import CLASSES, COLOURS, OTHER, PARTITION, UNKNOWN, invalid_labels, legacy_lookup
-from scan2bim.modelling import components, junctions
+from scan2bim.modelling import cleanup, components, junctions
 from scan2bim.plyio import PlyStreamWriter, read_ply, write_ply
 
 REPO = Path(__file__).resolve().parents[1]
@@ -166,6 +166,42 @@ def test_window_points_follow_the_nearest_run():
     runs = [dict(start=[0, 0], end=[5, 0], baseOffset=0.0), dict(start=[0, 3], end=[5, 3], baseOffset=1.0)]
     xy = np.array([[2.0, 0.1], [2.0, 2.9], [9.0, 0.0]])
     assert split(xy, runs).tolist() == [True, False, False]
+
+
+def test_diagonal_partition_is_removed():
+    a = element("partition", (1, 0), 0.0, 0.0, 4.0, 0.05)
+    b = element("partition", (0, 1), 0.0, 0.0, 3.0, 0.05)
+    angle = np.radians(28)
+    c = element("partition", (np.cos(angle), np.sin(angle)), 0.0, 0.5, 1.5, 0.05)
+    fragments = [element("partition", (np.cos(angle), np.sin(angle)), 0.3 * k, 0.5, 0.9, 0.05) for k in range(6)]
+    kept = cleanup.drop_misaligned([a, b, c] + fragments, lambda message: None)
+    assert len(kept) == 2 and kept[0] is a and kept[1] is b                 # many short fragments do not outvote long panels
+
+
+def test_curtain_wall_pieces_become_one():
+    a = element("glass_wall", (1, 0), 3.0, 0.0, 5.0, 0.06)
+    b = element("glass_wall", (-1, 0), -3.02, -9.0, -5.2, 0.06)         # same line, opposite direction
+    merged = cleanup.merge_curtain_walls([a, b], lambda message: None)
+    assert len(merged) == 1
+    assert (merged[0]["t0"], merged[0]["t1"]) == pytest.approx((0.0, 9.0))
+
+
+def test_wall_stops_at_curtain_wall():
+    curtain = dict(element("glass_wall", (1, 0), 0.0, 0.0, 6.0, 0.06), paired=True)
+    wall = dict(element("wall", (0, 1), -3.0, -2.0, 2.0, 0.15), paired=True)
+    result = cleanup.resolve_overlaps([wall, curtain], lambda message: None, "test")
+    kinds = [x["kind"] for x in result]
+    assert kinds.count("glass_wall") == 1 and kinds.count("wall") == 2
+    glass = next(x for x in result if x["kind"] == "glass_wall")
+    assert (glass["t0"], glass["t1"]) == (0.0, 6.0)
+
+
+def test_wall_continues_across_a_doorway():
+    left = dict(element("wall", (1, 0), 0.0, 0.0, 2.0), function="interior")
+    right = dict(element("wall", (1, 0), 0.0, 3.2, 6.0), function="interior")
+    door = components.continue_wall_across(dict(c=[2.5, 0.0], d=[1.0, 0.0], width=0.9), [left, right])
+    assert components.door_host(door, [left, right]) is not None
+    assert (left["t1"] == pytest.approx(3.2)) or (right["t0"] == pytest.approx(2.0))
 
 
 def element(kind, d, o, t0, t1, thickness=0.2):

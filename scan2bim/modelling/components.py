@@ -5,8 +5,8 @@ grouping measured instances. The description is written as components.json and c
 model is built from it alone, without reading the point cloud.
 
     Wall types / walls        function (exterior, interior, glass_wall, window_run, partition), thickness, centre line, height
-    Door and window types     width, height, sill; occurrences are hosted by a wall or glass wall at an offset
-                              along it; a door in a gap between elements has its own location and rotation
+    Door and window types     width, height, sill; occurrences are hosted by a wall or curtain wall at an offset
+                              along it; a wall next to a doorway is continued across it to host the door
     Spaces                    room name, boundary polygon, height
     Floor and ceiling types   thickness, material; occurrences have a boundary polygon
     Column types / columns    width, depth; occurrences have a location and a rotation
@@ -26,9 +26,11 @@ from .cleanup import clean_elements, rectangle
 from .context import ModelContext
 
 FLOOR_THICKNESS, CEILING_THICKNESS = 0.2, 0.02
+FLOOR_CLOSING = 0.1             # m, gaps up to twice this between rooms and walls are closed in the floor
 WALL_MATERIALS = {"exterior": "Exterior wall (material not observable)", "interior": "Interior wall", "glass_wall": "Glass", "window_run": "Glass", "partition": "Workstation panel"}
 HOST_ANGLE, HOST_DISTANCE = 10.0, 0.12
 MIN_SWING_ANGLE, HINGE_DISTANCE = 45.0, 0.25
+BRIDGE_DISTANCE, BRIDGE_GAP = 0.25, 1.0     # m, how far a wall may lie from a doorway to be continued across it
 NAMES = {"exterior": "Wall", "interior": "Wall", "glass_wall": "Curtain wall", "window_run": "Window", "partition": "Partition"}
 
 
@@ -55,10 +57,14 @@ def ring(line) -> List[List[float]]:
     return [[r3(x), r3(y)] for x, y in line.coords]
 
 
+def assign_functions(elements: List[dict]) -> None:
+    for x in elements:
+        if x["kind"] != "column":
+            x["function"] = x["kind"] if x["kind"] in ("partition", "glass_wall", "window_run") else ("interior" if x["paired"] else "exterior")
+
+
 def describe_walls(elements: List[dict], room_polygons: list) -> Tuple[List[dict], List[dict], List[dict]]:
     walls = [x for x in elements if x["kind"] != "column"]
-    for x in walls:
-        x["function"] = x["kind"] if x["kind"] in ("partition", "glass_wall", "window_run") else ("interior" if x["paired"] else "exterior")
     types = []
     for function in WALL_MATERIALS:
         members = [x for x in walls if x["function"] == function]
@@ -159,7 +165,50 @@ def door_host(leaf: dict, walls: List[dict]) -> Optional[dict]:
     return None
 
 
-def describe_openings(openings: dict, slabs: List[dict], walls: List[dict]) -> Tuple[dict, List[dict], List[dict]]:
+def continue_wall_across(leaf: dict, walls: List[dict]) -> dict:
+    """Extend the nearest collinear wall over the doorway so that it hosts the door, up to the wall on the far side."""
+    centre, d = np.array(leaf["c"]), np.array(leaf["d"])
+    half = leaf["width"] / 2
+    sides = []
+    for x in walls:
+        if x["function"] in ("partition", "window_run") or abs(x["d"] @ d) < np.cos(np.radians(HOST_ANGLE)):
+            continue
+        along = centre @ x["d"]
+        gap = max(x["t0"] - along - half, along - half - x["t1"], 0.0)
+        if abs(centre @ x["n"] - x["o"]) <= x["T"] / 2 + BRIDGE_DISTANCE and gap <= BRIDGE_GAP:
+            sides.append((gap, id(x), x))
+    if not sides:
+        return leaf
+    sides.sort(key=lambda side: side[:2])
+    host = sides[0][2]
+    along = centre @ host["d"]
+    low, high = along - half, along + half
+    for _, _, other in sides[1:]:                  # close the rest of the gap to the wall on the far side
+        ends = [(host["d"] * t + host["n"] * host["o"]) @ other["d"] for t in (low, high)]
+        if other["t0"] > max(ends):
+            high = high + (other["t0"] - max(ends)) if abs(host["d"] @ other["d"]) and host["d"] @ other["d"] > 0 else high
+            low = low - (other["t0"] - max(ends)) if host["d"] @ other["d"] < 0 else low
+        elif other["t1"] < min(ends):
+            low = low - (min(ends) - other["t1"]) if host["d"] @ other["d"] > 0 else low
+            high = high + (min(ends) - other["t1"]) if host["d"] @ other["d"] < 0 else high
+        break
+    host["t0"], host["t1"] = min(host["t0"], low), max(host["t1"], high)
+    on_axis = host["d"] * along + host["n"] * host["o"]
+    return dict(c=on_axis.tolist(), d=host["d"].tolist(), width=leaf["width"])
+
+
+def close_doors(openings: dict, walls: List[dict]) -> List[dict]:
+    """Closed position of every door, cut into a wall or curtain wall wherever one can host it."""
+    closed = []
+    for door in openings["doors"]:
+        leaf = doorway(door, walls)
+        if door_host(leaf, walls) is None:
+            leaf = continue_wall_across(leaf, walls)
+        closed.append(dict(leaf=leaf, height=door["height"], z0=door["z0"]))
+    return closed
+
+
+def describe_openings(openings: dict, closed_doors: List[dict], slabs: List[dict], walls: List[dict]) -> Tuple[dict, List[dict], List[dict]]:
     items = []
     for opening in openings["windows"]:
         slab = slabs[opening["slab"]]
@@ -168,8 +217,8 @@ def describe_openings(openings: dict, slabs: List[dict], walls: List[dict]) -> T
         hosts = [x for x in walls if x["function"] not in ("partition", "window_run") and abs(x["d"] @ d) > 0.99]
         host = min(hosts, key=lambda x: abs(centre @ x["n"] - x["o"]) + max(0, x["t0"] - centre @ x["d"], centre @ x["d"] - x["t1"]))
         items.append(dict(kind="window", wall=host, offset=float(centre @ host["d"] - host["t0"]), W=opening["width"], H=opening["height"], sill=opening["z0"]))
-    for door in openings["doors"]:
-        leaf = doorway(door, walls)
+    for door in closed_doors:
+        leaf = door["leaf"]
         host = door_host(leaf, walls)
         item = dict(kind="door", wall=host, W=leaf["width"], H=door["height"], sill=door["z0"])
         if host is not None:
@@ -235,7 +284,7 @@ def describe_surfaces(rooms: List[dict], walls: List[dict], floor_z: float) -> T
         ceilings.append(dict(id=f"C{i + 1:02d}", name=f"Ceiling {i + 1:02d}", typeID="CT01", height=r3(room["z_ceil"] - floor_z), boundary=ring(polygon.exterior),
                              holes=[ring(hole) for hole in polygon.interiors], source="room footprint, median ceiling height"))
     outline = unary_union([shape(r["poly"]) for r in rooms] + [rectangle(x) for x in walls if x["function"] != "partition"])
-    outline = outline.buffer(0.02, join_style=2).buffer(-0.02, join_style=2)
+    outline = outline.buffer(FLOOR_CLOSING, join_style=2).buffer(-FLOOR_CLOSING, join_style=2)
     floors = [dict(id=f"F{k + 1:02d}", name=f"Floor {k + 1:02d}", typeID="SL01", boundary=ring(part.exterior), holes=[ring(hole) for hole in part.interiors],
                    source="room footprints and walls")
               for k, part in enumerate(outline.geoms if hasattr(outline, "geoms") else [outline])]
@@ -332,8 +381,10 @@ def run(ctx: ModelContext) -> None:
     elements, floor_z, height = clean_elements(ctx)
     rooms = ctx.load("rooms")
     polygons = [shape(r["poly"]) for r in rooms["rooms"]]
+    assign_functions(elements)
+    closed_doors = close_doors(ctx.load("openings"), [x for x in elements if x["kind"] != "column"])
     walls, wall_types, wall_items = describe_walls(elements, polygons)
-    opening_types, doors, windows = describe_openings(ctx.load("openings"), rooms["slabs"], walls)
+    opening_types, doors, windows = describe_openings(ctx.load("openings"), closed_doors, rooms["slabs"], walls)
     column_types, columns = describe_columns(elements)
     floors, ceilings, spaces = describe_surfaces(rooms["rooms"], walls, floor_z)
     description = dict(Building=dict(id="B01", name=ctx.project_name),

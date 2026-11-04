@@ -1,7 +1,12 @@
 """Element clean-up: L and T junctions, overlap resolution and measured heights.
 
-Overlaps are resolved by priority: column > wall > curtain wall and window > partition. A parallel overlap thins the
-lower-priority element, any other overlap cuts it. Pieces that become too short are dropped.
+Modelling rules:
+  - A partition, or a short glazed run, must follow the direction of its surroundings. One that does not
+    (a diagonal panel coming out of a partition) is removed.
+  - Collinear pieces of a curtain wall are one continuous curtain wall.
+  - Overlaps are resolved by priority: column > curtain wall > wall > window > partition. A parallel
+    overlap thins the lower-priority element, any other overlap cuts it, so walls stop at a curtain wall
+    and never cut it. Pieces that become too short are dropped.
 
 Walls and columns end at the 99th percentile height of their own points. Glazed runs (curtain walls and
 windows) take their height from their own points too: a run that starts more than 0.3 m above the floor
@@ -21,11 +26,14 @@ from . import junctions
 from .context import ModelContext
 from .structure import GLAZED
 
-PRIORITY = {"column": 0, "wall": 1, "glass_wall": 2, "window_run": 2, "partition": 4}
+PRIORITY = {"column": 0, "glass_wall": 1, "wall": 2, "window_run": 3, "partition": 4}
 GAP, MIN_LENGTH, PARALLEL_ANGLE = 0.001, 0.10, 10.0
 MIN_PARTITION_LENGTH = 0.30
 GLASS_EXTENSION = 1.0                  # m, largest gap between a glass end and the wall or data edge behind it
 GLASS_GAP_DENSITY = 500                # points per metre; an emptier gap stays open as a possible doorway
+LOCAL_RADIUS, LOCAL_ANGLE = 3.0, 5.0    # m, deg: neighbourhood and tolerance of the direction rule
+SHORT_GLAZED_RUN = 1.5                 # m, longer glazed runs are kept whatever their direction
+CURTAIN_MERGE_GAP, CURTAIN_MERGE_OFFSET = 0.5, 0.1     # m
 HEIGHT_POINTS_MIN = 200                # fewer own points than this: keep the storey height
 GLASS_FLOOR_BAND = 0.3                 # m, window points starting this close to the floor are a full glass wall
 
@@ -60,6 +68,56 @@ def collect_elements(ctx: ModelContext) -> Tuple[List[dict], float, float]:
         elements.append(dict(kind="column", src=("column", i), d=d, n=n, o=float(centre @ n), T=column["b"], t0=float(centre @ d - column["a"] / 2),
                              t1=float(centre @ d + column["a"] / 2), H=height, source="column points, outer box", paired=True))
     return elements, floor_z, height
+
+
+def drop_misaligned(elements: List[dict], log) -> List[dict]:
+    """Remove partitions and short glazed runs that disagree with the direction of the long elements around them."""
+    linear = [x for x in elements if x["kind"] != "column"]
+    centres = np.array([x["d"] * (x["t0"] + x["t1"]) / 2 + x["n"] * x["o"] for x in linear])
+    angles = np.array([np.degrees(np.arctan2(x["d"][1], x["d"][0])) % 90 for x in linear])
+    lengths = np.array([x["t1"] - x["t0"] for x in linear])
+    dropped = []
+    for i, x in enumerate(linear):
+        if x["kind"] != "partition" and not (x["kind"] in GLAZED and lengths[i] < SHORT_GLAZED_RUN):
+            continue
+        near = np.linalg.norm(centres - centres[i], axis=1) < LOCAL_RADIUS
+        near[i] = False
+        difference = np.abs((angles[near] - angles[i] + 45) % 90 - 45)
+        votes = lengths[near] ** 2             # long elements outweigh many short fragments
+        if votes[difference <= LOCAL_ANGLE].sum() + lengths[i] ** 2 < votes[difference > LOCAL_ANGLE].sum():
+            dropped.append(id(x))
+    kept = [x for x in elements if id(x) not in dropped]
+    log(f"misaligned elements removed: {len(dropped)}")
+    return kept
+
+
+def merge_curtain_walls(elements: List[dict], log) -> List[dict]:
+    """Join collinear curtain wall pieces into one continuous element."""
+    merged = 0
+    changed = True
+    while changed:
+        changed = False
+        runs = [x for x in elements if x["kind"] == "glass_wall"]
+        for a in runs:
+            for b in runs:
+                if a is b or abs(a["d"] @ b["d"]) < np.cos(np.radians(2)):
+                    continue
+                sign = 1.0 if a["d"] @ b["d"] > 0 else -1.0
+                low, high = sorted((sign * b["t0"], sign * b["t1"]))
+                gap = max(low - a["t1"], a["t0"] - high)
+                if abs(a["o"] - sign * b["o"]) <= CURTAIN_MERGE_OFFSET and gap <= CURTAIN_MERGE_GAP:
+                    length_a, length_b = a["t1"] - a["t0"], high - low
+                    a["o"] = (a["o"] * length_a + sign * b["o"] * length_b) / (length_a + length_b)
+                    a["t0"], a["t1"] = min(a["t0"], low), max(a["t1"], high)
+                    a["T"] = max(a["T"], b["T"])
+                    elements = [x for x in elements if x is not b]
+                    merged += 1
+                    changed = True
+                    break
+            if changed:
+                break
+    log(f"curtain wall pieces joined: {merged}")
+    return elements
 
 
 def extend_glass_walls(ctx: ModelContext, elements: List[dict], floor_z: float) -> None:
@@ -193,7 +251,9 @@ def measure_heights(ctx: ModelContext, elements: List[dict], floor_z: float) -> 
 
 def clean_elements(ctx: ModelContext) -> Tuple[List[dict], float, float]:
     elements, floor_z, height = collect_elements(ctx)
+    elements = drop_misaligned(elements, ctx.log)
     extend_glass_walls(ctx, elements, floor_z)
+    elements = merge_curtain_walls(elements, ctx.log)
     ctx.log(f"elements in: {dict(collections.Counter(x['kind'] for x in elements))}")
     cleaned = resolve_overlaps(elements, ctx.log, "pass 1")
     for number in (2, 3):

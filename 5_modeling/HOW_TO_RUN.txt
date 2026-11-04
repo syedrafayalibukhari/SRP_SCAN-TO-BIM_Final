@@ -39,8 +39,9 @@ Results (folder "output")
 
 Notes
   - One group of door points is one door. A door that was open during the scan is placed closed
-    in its doorway. It is cut into the wall or glass panel when one runs through the doorway;
-    otherwise it fills the gap between the two elements.
+    in its doorway, and the wall next to the doorway is continued across it to host the door.
+  - A partition that does not follow the direction around it is removed. Curtain walls are
+    continuous; other walls stop at their face.
   - A group of door points must exist: a doorway without door points is not modelled.
   - Window points become IfcWindow and curtain wall points become IfcCurtainWall. A glazed run
     that starts above the floor has a measured sill and head. Nothing is modelled below it,

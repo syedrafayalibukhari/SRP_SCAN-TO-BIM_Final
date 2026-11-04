@@ -206,7 +206,10 @@ def main() -> None:
 
     components_path = args.components or args.model.with_name("components.json")
     if components_path.exists():
-        found = overlaps(plan_outlines(json.loads(components_path.read_text(encoding="utf-8"))))
+        components = json.loads(components_path.read_text(encoding="utf-8"))
+        hosted = sum(door["wallID"] is not None for door in components["Doors"])
+        log(f"   doors hosted in a wall or curtain wall: {hosted} of {len(components['Doors'])}")
+        found = overlaps(plan_outlines(components))
         log(f"4. Plan overlaps above {OVERLAP_MIN_M2} m2: {len(found)}")
         for item in found[:20]:
             log(f"   {item}")
