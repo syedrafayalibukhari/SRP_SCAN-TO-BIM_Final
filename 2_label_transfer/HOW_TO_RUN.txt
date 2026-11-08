@@ -8,10 +8,11 @@ What it does
 
   Classes: floor, ceiling, wall, door, window, column, partition, other, curtain wall.
 
-1. Choose tiling
-   Open label_transfer.py in a text editor and find near the top:
-        TILE_SIZE_M = 8
-   8 = 8 m x 8 m tiles, 0 = no tiling (one file for the whole floor). Save the file.
+1. Choose tiling (optional)
+   By default the whole floor is written as one file. For a large floor or a computer with little
+   memory, open label_transfer.py in a text editor and change near the top:
+        TILE_SIZE_M = 0
+   to 8 (8 m x 8 m tiles). Save the file.
 
 2. Open a command window in this folder and run:
         python label_transfer.py
@@ -20,14 +21,14 @@ What it does
         python label_transfer.py --input my_floor.ply
 
 Options
-  --tile-size 0             tile size for this run instead of TILE_SIZE_M (0 = no tiling)
+  --tile-size 8             tile size for this run instead of TILE_SIZE_M (0 = no tiling)
   --input NAME.ply          point cloud to use
   --output-folder NAME      folder for the results (default labelled)
 
 Results (folder "labelled")
   tile_rXX_cYY.ply             one file per tile (row XX, column YY)
-  labelled_floor.ply           the whole floor in one file (tile size 0)
-  tile_map.png                 top view coloured by starting label with the tile grid
+  labelled_floor.ply           the whole floor in one file (tile size 0, the default)
+  tile_map.png                 top view coloured by starting label with the tile grid (tiles only)
   label_transfer_report.txt    label shares, confidence and point counts per tile
 
 Notes

@@ -8,7 +8,7 @@ colour around each cube, (c) predict a label and a confidence (0-1), (d) give ev
 its cube, (e) write one file or tiles, a tile map and a report.
 
 Usage:  python label_transfer.py                    (uses TILE_SIZE_M below)
-        python label_transfer.py --tile-size 0      (no tiling: one file for the whole floor)
+        python label_transfer.py --tile-size 8      (8 m x 8 m tiles for this run)
 Input: preprocessed.ply next to this script or in ../1_preprocessing, or a file named with --input.
 """
 from __future__ import annotations
@@ -44,10 +44,11 @@ MODEL_INFO_PATH = ROOT / "model" / "model_info.json"
 
 # ============================================================================
 # TILE SIZE (metres) - SET THIS NUMBER BEFORE RUNNING
-#   8   = cut the floor into 8 m x 8 m tiles (one file per tile)
-#   0   = no tiling: one labelled file for the whole floor
+#   0   = no tiling: one labelled file for the whole floor (default)
+#   8   = cut the floor into 8 m x 8 m tiles (one file per tile), for large floors or computers
+#         with little memory
 # A value given with --tile-size overrides this one.
-TILE_SIZE_M = 8
+TILE_SIZE_M = 0
 # ============================================================================
 
 OUTSIDE_MARGIN_M = 0.3          # points this far below the floor / above the ceiling -> other

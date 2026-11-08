@@ -72,7 +72,7 @@ Each script accepts `--help`.
 | Setting | File | Default | Meaning |
 |---|---|---|---|
 | `VOXEL_SIZE_M` | `1_preprocessing/preprocess_pointcloud.py` | `0.02` | point spacing after downsampling (m) |
-| `TILE_SIZE_M` | `2_label_transfer/label_transfer.py` | `8` | tile size for manual labelling (m); `0` = one file |
+| `TILE_SIZE_M` | `2_label_transfer/label_transfer.py` | `0` | `0` = one file for the whole floor; e.g. `8` = 8 m tiles for large floors |
 
 ## Label classes
 
